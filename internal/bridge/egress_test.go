@@ -79,64 +79,16 @@ func TestEgressConfigMasksPreservesAndReloadsSecrets(t *testing.T) {
 	}
 }
 
-func TestEgressOptionalHostContextAndQuiescedRecovery(t *testing.T) {
-	started := make(chan struct{}, 1)
+func TestEgressQuiescedRecovery(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/block" {
-			started <- struct{}{}
-			<-r.Context().Done()
-			return
-		}
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
 	defer origin.Close()
 	s := egressTestService(t, directTestEndpoint("direct", "ip", 60, 4))
-	var disconnected atomic.Bool
-	var capabilityCalls atomic.Int32
 	s.SetHost(func(method string, payload, out any) error {
-		var response any
-		switch method {
-		case "host.scheduling.capabilities":
-			capabilityCalls.Add(1)
-			response = map[string]any{"request_context_supported": true, "local_delay_supported": true}
-		case "host.request.context":
-			if str(payload.(map[string]any)["host_callback_id"]) != "host-callback" {
-				return errors.New("wrong host callback ID")
-			}
-			state := "active"
-			if disconnected.Load() {
-				state = "closed" // Host removes completed/canceled callback contexts.
-			}
-			response = map[string]any{"supported": true, "state": state}
-		default:
-			return fmt.Errorf("unexpected host callback %s", method)
-		}
-		return json.Unmarshal(jsonBytes(response), out)
+		t.Errorf("unexpected host callback %s", method)
+		return fmt.Errorf("unexpected host callback %s", method)
 	})
-	payload := egressTestRequest(origin.URL + "/block")
-	payload["host_callback_id"] = "host-callback"
-	result := make(chan error, 1)
-	go func() {
-		_, err := s.openUpstream(payload, time.Now().Add(3*time.Second))
-		result <- err
-	}()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("native request did not reach the fixture")
-	}
-	disconnected.Store(true)
-	select {
-	case err := <-result:
-		if statusOf(err) != 499 {
-			t.Fatal("optional host cancellation did not cancel native HTTP", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("optional host cancellation did not promptly terminate native HTTP")
-	}
-	if capabilityCalls.Load() != 1 || s.egressStatus()["request_context_supported"] != true {
-		t.Fatal("capability discovery did not use the scheduling callback")
-	}
 	old := s.getEgressManager()
 	if _, err := s.Handle("plugin.quiesce", nil); err != nil {
 		t.Fatal(err)
@@ -151,7 +103,9 @@ func TestEgressOptionalHostContextAndQuiescedRecovery(t *testing.T) {
 	if s.getEgressManager() == old || !s.egressEnabled() {
 		t.Fatal("re-registration did not rebuild and reload the egress manager")
 	}
-	up, err := s.openUpstream(egressTestRequest(origin.URL), time.Now().Add(time.Second))
+	payload := egressTestRequest(origin.URL)
+	payload["host_callback_id"] = "host-callback"
+	up, err := s.openUpstream(payload, time.Now().Add(time.Second))
 	if err != nil {
 		t.Fatal("native transport remained closed after re-registration", err)
 	}

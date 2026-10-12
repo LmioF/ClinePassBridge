@@ -22,7 +22,6 @@ type Service struct {
 	egress               *egressManager
 	configMu             sync.Mutex // Serializes configuration read-modify-save transactions.
 	rateLimits           rateLimiter
-	localBackoffClock    *backoffClock // Test clock; set before serving requests.
 	credentialMu         sync.Mutex
 	authFiles            map[string]string
 	mu                   sync.RWMutex
@@ -52,7 +51,6 @@ type Service struct {
 	estimateActivity     map[string]estimateActivity
 	estimateWriteError   string
 	quotaWriteErrors     map[string]string
-	quotaAppliedDisabled bool
 }
 
 func NewService() *Service {
@@ -72,10 +70,6 @@ func (s *Service) config() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.cfg
-	if c.QuotaAutoPause != nil {
-		value := *c.QuotaAutoPause
-		c.QuotaAutoPause = &value
-	}
 	if c.ReasoningMapping != nil {
 		mapping := c.ReasoningMapping.clone()
 		c.ReasoningMapping = &mapping
@@ -199,15 +193,10 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		if e := json.Unmarshal(raw, &r); e != nil {
 			return nil, e
 		}
-		r.deadline = time.Now().Add(time.Duration(s.config().TimeoutSeconds) * time.Second)
-		var result any
-		var err error
 		if method == "executor.execute_stream" {
-			result, err = s.executeStream(r)
-		} else {
-			result, err = s.execute(r)
+			return s.executeStream(r)
 		}
-		return result, s.applyLocal429Backoff(r, err)
+		return s.execute(r)
 	case "executor.count_tokens":
 		return nil, fail(501, "Cline Pass does not expose an exact token counting endpoint")
 	case "executor.http_request":
@@ -297,14 +286,13 @@ func (s *Service) resolveModel(model string) (string, error) {
 	}
 	return "", fail(400, "model is not enabled in ClinePassBridge: "+model)
 }
-func authData(c Credential, filename string, autoPause ...bool) any {
+func authData(c Credential, filename string) any {
 	c.RequestScopedErrors = requestErrorRules()
 	// Metadata and stored auth JSON must agree, including after hot reload.
 	var rules []any
 	_ = json.Unmarshal(jsonBytes(c.RequestScopedErrors), &rules)
-	enabled := len(autoPause) == 0 || autoPause[0]
 	c = normalizeQuotaCredential(c)
-	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled || enabled && c.QuotaBlock != nil, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
+	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled || c.QuotaBlock != nil, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
 }
 func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	s.authFileMu.Lock()
@@ -369,7 +357,7 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	}
 	s.mu.Unlock()
 	s.wakeUsageSampler()
-	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName, quotaAutoPauseEnabled(s.config()))}, nil
+	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName)}, nil
 }
 func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	var r struct{ StorageJSON []byte }
@@ -393,7 +381,7 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	if filename == "" {
 		filename = c.ID + ".json"
 	}
-	return map[string]any{"Auth": authData(c, filename, quotaAutoPauseEnabled(s.config())), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
+	return map[string]any{"Auth": authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	var c Credential
@@ -418,7 +406,7 @@ func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	if c.APIKey == "" || c.Disabled || revoked {
 		return c, fail(401, "Cline Pass credential is missing or disabled")
 	}
-	if quotaAutoPauseEnabled(s.config()) && normalizeQuotaCredential(c).QuotaBlock != nil {
+	if normalizeQuotaCredential(c).QuotaBlock != nil {
 		var retryAt time.Time
 		if c.QuotaBlock.RetryAt != nil {
 			retryAt = *c.QuotaBlock.RetryAt

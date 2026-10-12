@@ -28,7 +28,7 @@ func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset", "scheduling/reset"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling", "scheduling/credential", "egress"} {
+	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling/credential", "egress"} {
 		routes = append(routes, map[string]string{"Method": "PUT", "Path": apiBase + "/" + p})
 	}
 	routes = append(routes, map[string]string{"Method": "DELETE", "Path": apiBase + "/credentials"})
@@ -76,8 +76,6 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 	switch r.Method + " " + p {
 	case "GET /scheduling":
 		return s.schedulingResponse()
-	case "PUT /scheduling":
-		return s.updateScheduling(r)
 	case "PUT /scheduling/credential":
 		return s.schedulingSetCredential(r)
 	case "POST /scheduling/reset":

@@ -121,7 +121,6 @@ func (s *Service) openEgress(payload any, deadline time.Time, diagnostics ...*mo
 	if err != nil {
 		return upstreamStream{}, true, err
 	}
-	go s.monitorEgressContext(p, op)
 	lease, err := p.acquire(op.ctx, pin)
 	if err != nil {
 		p.finishOperation(op)
@@ -250,109 +249,4 @@ func (s *Service) classifyEgressError(up upstreamStream, body map[string]any, ra
 	p.notifyLocked()
 	p.mu.Unlock()
 	return &upstreamError{APIError: &APIError{429, "upstream_ip_rate_limited", "[clinepassbridge:ip_rate_limit] Upstream edge/IP rate limit"}, HTTPStatus: up.StatusCode, UpstreamStatus: 429, Scope: "egress_ip", RetryAt: until}
-}
-
-type egressHostState struct {
-	Supported bool       `json:"supported"`
-	State     string     `json:"state"`
-	Deadline  *time.Time `json:"deadline,omitempty"`
-}
-
-// Optional callbacks are queried asynchronously and bounded. There is at most
-// one pending query per operation; unsupported stock hosts use deadline/stop.
-func (s *Service) monitorEgressContext(p *egressManager, op *egressOperation) {
-	if op.callback == "" {
-		return
-	}
-	p.mu.Lock()
-	known, supported := p.contextKnown, p.contextSupported
-	p.mu.Unlock()
-	if !known {
-		type capability struct {
-			Supported bool `json:"request_context_supported"`
-		}
-		reply := make(chan bool, 1)
-		go func() {
-			var caps capability
-			err := s.call("host.scheduling.capabilities", map[string]any{}, &caps)
-			reply <- err == nil && caps.Supported
-		}()
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case supported = <-reply:
-		case <-timer.C:
-		case <-op.ctx.Done():
-			timer.Stop()
-			return
-		}
-		timer.Stop()
-		p.mu.Lock()
-		p.contextKnown, p.contextSupported = true, supported
-		p.mu.Unlock()
-	}
-	if !supported {
-		return
-	}
-	var earlierDeadline <-chan time.Time
-	var deadlineTimer *time.Timer
-	var earliestDeadline time.Time
-	defer func() {
-		if deadlineTimer != nil {
-			deadlineTimer.Stop()
-		}
-	}()
-	for {
-		reply := make(chan egressHostState, 1)
-		go func() {
-			var state egressHostState
-			if s.call("host.request.context", map[string]any{"host_callback_id": op.callback}, &state) != nil {
-				state.Supported = false
-			}
-			reply <- state
-		}()
-		queryTimer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case state := <-reply:
-			queryTimer.Stop()
-			if !state.Supported {
-				return
-			}
-			switch state.State {
-			case "canceled", "cancelled", "missing", "closed":
-				op.cancel(context.Canceled)
-				return
-			case "deadline_exceeded", "expired":
-				op.cancel(context.DeadlineExceeded)
-				return
-			}
-			if state.Deadline != nil && (earliestDeadline.IsZero() || state.Deadline.Before(earliestDeadline)) {
-				earliestDeadline = *state.Deadline
-				if deadlineTimer != nil {
-					deadlineTimer.Stop()
-				}
-				deadlineTimer = time.NewTimer(max(0, time.Until(*state.Deadline)))
-				earlierDeadline = deadlineTimer.C
-			}
-		case <-queryTimer.C:
-			return // An unresponsive ABI callback must not hold the request open.
-		case <-op.ctx.Done():
-			queryTimer.Stop()
-			return
-		case <-earlierDeadline:
-			queryTimer.Stop()
-			op.cancel(context.DeadlineExceeded)
-			return
-		}
-		poll := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-poll.C:
-		case <-earlierDeadline:
-			poll.Stop()
-			op.cancel(context.DeadlineExceeded)
-			return
-		case <-op.ctx.Done():
-			poll.Stop()
-			return
-		}
-	}
 }

@@ -27,20 +27,18 @@ type egressOperation struct {
 }
 
 type egressManager struct {
-	saveMu           sync.Mutex
-	mu               sync.Mutex
-	cfg              EgressConfig
-	groups           map[string]*egressGroup
-	clients          map[string]*http.Client
-	streams          map[string]*egressLocalStream
-	operations       map[*egressOperation]struct{}
-	bindings         map[string]*egressContextBinding
-	changed          chan struct{}
-	closed           bool
-	cursor           int
-	contextSupported bool
-	contextKnown     bool
-	clock            func() time.Time
+	saveMu     sync.Mutex
+	mu         sync.Mutex
+	cfg        EgressConfig
+	groups     map[string]*egressGroup
+	clients    map[string]*http.Client
+	streams    map[string]*egressLocalStream
+	operations map[*egressOperation]struct{}
+	bindings   map[string]*egressContextBinding
+	changed    chan struct{}
+	closed     bool
+	cursor     int
+	clock      func() time.Time
 }
 
 func newEgressManager() *egressManager {
@@ -353,5 +351,5 @@ func (s *Service) egressStatus() map[string]any {
 		}
 		groups = append(groups, row)
 	}
-	return map[string]any{"enabled": p.cfg.Enabled, "groups": groups, "request_context_supported": p.contextSupported}
+	return map[string]any{"enabled": p.cfg.Enabled, "groups": groups}
 }
