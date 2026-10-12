@@ -123,14 +123,15 @@
     .search { width: min(330px, 100%); flex: 1 1 220px; }
     .toolbar .dropdown { flex: 0 1 155px; }
     .count { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 12px; }
-    .log-head { display: grid; grid-template-columns: var(--log-columns); gap: 8px; padding: 0 13px 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
-    #logsPanel { --log-columns: 138px minmax(230px, 1fr) 124px 116px 100px 130px 118px minmax(150px, .7fr) 16px; max-width: 1500px; margin-inline: auto; }
+    .log-head { display: grid; grid-template-columns: var(--log-columns); gap: 6px; padding: 0 13px 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    #logsPanel { --log-columns: minmax(104px, .8fr) minmax(156px, 1.5fr) minmax(88px, .8fr) minmax(74px, .65fr) minmax(64px, .65fr) minmax(74px, .7fr) minmax(96px, .8fr) minmax(150px, 1.6fr) 14px; max-width: 1500px; margin-inline: auto; }
     .log-list { display: grid; gap: 6px; }
     .log-entry { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
     .log-entry[open] { background: var(--inset-bg); box-shadow: inset 3px 0 var(--accent); }
     .log-entry > summary { list-style: none; cursor: pointer; }
     .log-entry > summary::-webkit-details-marker { display: none; }
-    .row-main { display: grid; grid-template-columns: var(--log-columns); gap: 8px; min-height: 78px; padding: 12px; align-items: center; font-size: 12px; line-height: 1.4; }
+    .row-main { display: grid; grid-template-columns: var(--log-columns); gap: 6px; min-height: 78px; padding: 12px; align-items: center; font-size: 12px; line-height: 1.4; }
+    .log-model .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row-main .subtext { font-size: 11px; margin-top: 4px; }
     .log-latency { display: grid; gap: 4px; width: 118px; max-width: 100%; }
     .latency-line { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; border-left: 3px solid var(--metric-color, var(--line)); border-radius: 3px; padding: 2px 5px; background: color-mix(in srgb, var(--metric-color, var(--line)) 7%, var(--surface)); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -325,10 +326,11 @@
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme]) { color-scheme: dark; --bg: #1d1b18; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0,0,0,.3); }
     }
-    @media (max-width: 1360px) {
+    @media (max-width: 1080px) {
       .log-head { display: none; }
       .log-list { margin-top: 16px; }
-      .row-main { grid-template-columns: repeat(4, minmax(0, 1fr)) 20px; }
+      .row-main { grid-template-columns: repeat(4, minmax(0, 1fr)) 20px; gap: 8px; }
+      .log-model .mono { white-space: normal; }
       .row-main .cell:nth-child(n+5) { grid-row: 2; }
       .row-main .cell:nth-child(5) { grid-column: 1; }
       .row-main .cell:nth-child(6) { grid-column: 2; }
@@ -1063,7 +1065,7 @@
       }).join('') : `<div class="subtext">${local ? '本地退避拦截，未发起上游请求' : '无尝试明细'}</div>`;
       return `<details class="log-entry" data-id="${esc(log.id)}"><summary class="row-main">
         <div class="cell"><span class="cell-label">时间</span><div class="primary-text mono">${local ? '首 ' : ''}${formatTime(log.time)}</div>${local ? `<div class="subtext mono">末 ${formatTime(lastTime)}</div>` : ''}</div>
-        <div class="cell"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono">${shown(log.model)}</div><div class="subtext mono">${shown(log.upstream_model)}</div></div>
+        <div class="cell log-model"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono" title="${esc(log.model || '')}">${shown(log.model)}</div><div class="subtext mono" title="${esc(log.upstream_model || '')}">${shown(log.upstream_model)}</div></div>
         <div class="cell"><span class="cell-label">思考强度</span><span class="badge reasoning-badge" title="${log.reasoning_mapping ? (local ? '映射已计算；本次被本地退避拦截，未发往上游' : '插件收到的强度 → 发往上游的强度') : '未应用插件映射；— 表示未识别到显式强度'}">${esc(reasoningText(log))}</span></div>
         <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
         <div class="cell"><span class="cell-label">凭据</span><div class="primary-text truncate" title="${esc(credential)}">${esc(credential)}</div></div>
