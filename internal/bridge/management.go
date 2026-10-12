@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,13 +22,13 @@ const apiBase = "/v0/management/clinepassbridge"
 func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	s.startUsageSampler()
 	routes := []map[string]string{}
-	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage"} {
+	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage", "scheduling", "egress"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset"} {
+	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset", "scheduling/reset"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models", "models/reasoning", "config", "credentials"} {
+	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling", "scheduling/credential", "egress"} {
 		routes = append(routes, map[string]string{"Method": "PUT", "Path": apiBase + "/" + p})
 	}
 	routes = append(routes, map[string]string{"Method": "DELETE", "Path": apiBase + "/credentials"})
@@ -57,6 +58,11 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		b = []byte(strings.ReplaceAll(string(b), "/*__CPA_AUTH_COMPAT__*/", string(authJS)))
+		schedulingJS, err := ui.ReadFile("ui/scheduling.js")
+		if err != nil {
+			return nil, err
+		}
+		b = []byte(strings.ReplaceAll(string(b), "/*__SCHEDULING_MODULE__*/", string(schedulingJS)))
 		return ManagementResponse{StatusCode: 200, Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}, "X-Content-Type-Options": []string{"nosniff"}}, Body: b}, nil
 	}
 	if !strings.HasPrefix(r.Path, apiBase+"/") {
@@ -68,6 +74,21 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		defer s.configMu.Unlock()
 	}
 	switch r.Method + " " + p {
+	case "GET /scheduling":
+		return s.schedulingResponse()
+	case "PUT /scheduling":
+		return s.updateScheduling(r)
+	case "PUT /scheduling/credential":
+		return s.schedulingSetCredential(r)
+	case "POST /scheduling/reset":
+		return s.resetScheduling(r)
+	case "GET /egress":
+		return s.egressManagementResponse()
+	case "PUT /egress":
+		if _, err := s.saveEgressConfig(r.Body); err != nil {
+			return managementJSON(statusOf(err), map[string]any{"error": safeError(err)})
+		}
+		return s.egressManagementResponse()
 	case "GET /status":
 		s.mu.RLock()
 		logError := s.logWriteError
@@ -176,7 +197,7 @@ func (s *Service) saveConfig(cfg Config) error {
 	s.mu.Lock()
 	s.cfg = cfg
 	s.mu.Unlock()
-	return s.refreshRegistrations()
+	return errors.Join(s.refreshRegistrations(), s.reconcileQuotaScheduling())
 }
 func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 	limit, _ := strconv.Atoi(r.Query.Get("limit"))

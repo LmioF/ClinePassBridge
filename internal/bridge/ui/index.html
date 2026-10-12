@@ -306,6 +306,22 @@
     .dropdown-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 20%, var(--surface)); font-weight: 600; }
     .dropdown-empty { padding: 9px 11px; color: var(--muted); }
     .toast { position: fixed; right: 18px; bottom: 18px; max-width: min(420px, calc(100vw - 36px)); border: 1px solid var(--line); border-radius: 6px; padding: 10px 13px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); z-index: 10; }
+    .schedule-account, .egress-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 14px 0; border-bottom: 1px solid var(--inset-line); }
+    .schedule-account:last-child, .egress-row:last-child { border-bottom: 0; }
+    .schedule-account-main { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+    .schedule-account-detail, .egress-metrics { display: flex; flex-wrap: wrap; gap: 6px 20px; grid-column: 1; overflow-wrap: anywhere; }
+    .egress-metrics { color: var(--muted); font-size: 12px; }
+    .egress-metrics b { color: var(--ink); font-weight: 500; }
+    .schedule-account > .row-actions, .egress-row > .row-actions { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+    .schedule-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+    .schedule-tools label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+    .schedule-tools input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+    #egressWait { width: 80px; }
+    #schedulingPanel > .panel { margin-top: 16px; }
+    @media (max-width: 740px) {
+      .schedule-account, .egress-row { grid-template-columns: minmax(0, 1fr); }
+      .schedule-account > .row-actions, .egress-row > .row-actions { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
+    }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme]) { color-scheme: dark; --bg: #1d1b18; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0,0,0,.3); }
     }
@@ -377,8 +393,26 @@
       <button class="tab" id="logsTab" role="tab" aria-selected="true" aria-controls="logsPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3Z"/><path d="M15 3v5h5M8 12h8M8 16h5"/></svg><span>请求日志</span></button>
       <button class="tab" id="pinTab" role="tab" aria-selected="false" aria-controls="pinPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-4 1-4 4-1 4-5-5 4-1 4-4 1-4ZM7 17l-4 4"/></svg><span>钉上游</span></button>
       <button class="tab" id="configTab" role="tab" aria-selected="false" aria-controls="configPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h7m4 0h5M4 17h3m4 0h9"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>配置概览</span></button>
+      <button class="tab" id="schedulingTab" role="tab" aria-selected="false" aria-controls="schedulingPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16"/><circle cx="8" cy="5" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="19" r="2"/></svg><span>调度与限流</span></button>
     </div>
 
+
+    <section id="schedulingPanel" role="tabpanel" aria-labelledby="schedulingTab" hidden>
+      <div class="toolbar"><button class="button compact" id="refreshScheduling" type="button">刷新状态</button><span class="badge" id="scheduleDelayStatus" title="本地拒绝返回前等待5秒，实际恢复取决于冷却和额度状态。">插件本地 429 · 5 秒延迟</span><span class="count" id="scheduleUpdated"></span></div>
+      <div class="summary" id="scheduleSummary"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>账号调度</h2><label class="schedule-tools" title="任一套餐窗口耗尽时暂停调度，复查确认恢复后重新参与；保留手动停用。"><input id="quotaAutoPause" type="checkbox">额度耗尽自动暂停</label></div>
+        <div id="scheduleAccounts"><div class="empty">正在读取调度状态…</div></div>
+        <div class="credential-footer"><span class="subtext" id="scheduleHostStatus"></span></div>
+        <p class="inline-state" id="scheduleState" role="status"></p>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>代理出口池</h2><button class="button compact primary" id="openEgress" type="button">添加出口</button></div>
+        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后只使用池内可用出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后产生本地429，再按本地退避规则延迟返回。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
+        <div id="egressList"><div class="empty">正在读取出口…</div></div>
+        <p class="inline-state" id="egressState" role="status"></p>
+      </div>
+    </section>
     <section id="logsPanel" role="tabpanel" aria-labelledby="logsTab">
       <div class="panel log-controls">
       <div class="toolbar">
@@ -502,6 +536,18 @@
     </section>
   </main>
 
+  <dialog id="egressDialog" aria-labelledby="egressDialogTitle">
+    <h2 id="egressDialogTitle">添加出口</h2>
+    <form class="form-stack" id="egressForm">
+      <div class="field"><label for="egressLabel">名称</label><input class="control" id="egressLabel" maxlength="100" required></div>
+      <div class="field"><label for="egressURL" title="支持 HTTP、HTTPS、SOCKS5、SOCKS5H 代理，包括 Resin；输入 direct 使用直连。认证信息仅在保存时提交。">代理地址</label><input class="control" id="egressURL" type="password" autocomplete="new-password" spellcheck="false" required></div>
+      <div class="field"><label for="egressGroup" title="同一公网 IP 的多个代理地址填相同分组，共享预算；留空自动创建独立分组。">出口分组</label><input class="control" id="egressGroup" maxlength="100" placeholder="例如：出口IP或节点组"></div>
+      <div class="field-line"><div class="field"><label for="egressRPM">每 60 秒请求数</label><input class="control" id="egressRPM" type="number" min="1" max="100000" value="60" required></div><div class="field"><label for="egressInflight">最大在飞请求</label><input class="control" id="egressInflight" type="number" min="1" max="1024" value="16" required></div></div>
+      <label class="schedule-tools"><input type="checkbox" id="egressEndpointEnabled" checked>启用此出口</label>
+      <p class="inline-state" id="egressDialogState" role="status"></p>
+      <div class="form-foot"><button class="button" type="button" id="cancelEgress">取消</button><button class="button primary" type="submit" id="submitEgress">保存出口</button></div>
+    </form>
+  </dialog>
   <dialog id="authDialog" aria-labelledby="authTitle">
     <h2 id="authTitle">管理鉴权（兜底）</h2>
     <p>优先复用同源管理页保存的登录。手动密钥验证成功后保留在本标签页；勾选下方选项可在下次打开时继续使用。</p>
@@ -1616,12 +1662,13 @@
       } catch (error) { globalError(`配置读取失败：${error.message}`); }
     }
     function setTab(name) {
-      for (const tab of ['logs', 'pin', 'config']) {
+      for (const tab of ['logs', 'pin', 'config', 'scheduling']) {
         $(`${tab}Tab`).setAttribute('aria-selected', String(tab === name));
         $(`${tab}Panel`).hidden = tab !== name;
       }
       if (name !== 'config') credentialView.queue.clear();
-      if (name !== 'logs') loadConfig();
+      if (name === 'scheduling') loadScheduling();
+      else if (name !== 'logs') loadConfig();
       else loadStatistics();
     }
     $('openPinEvidence').addEventListener('click', () => $('pinEvidenceDialog').showModal());
@@ -2080,6 +2127,7 @@
       try { await api('/credentials', { method: 'DELETE', query: { id } }); renderCredentials(await api('/credentials')); await loadStatus(); toast('凭据已删除'); }
       catch (error) { toast(`删除失败：${error.message}`); button.disabled = false; }
     });
+    /*__SCHEDULING_MODULE__*/
     $('rememberAuth').checked = window.PassBridgeRememberAuth?.() || false;
     restoreStatisticsRange();
     if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');

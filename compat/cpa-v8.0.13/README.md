@@ -20,20 +20,30 @@
 
 ## 应用与验证
 
-先在 CPA 的干净分支或独立 worktree 中操作，`$cpaCheckout` 替换为源码绝对路径，`$delayPatch` 替换为本补丁绝对路径：
+先在 CPA 的干净分支或独立 worktree 中操作，替换下面的源码路径：
 
-```powershell
-$cpaCheckout = 'E:\VPS\work\YOUR-CPA-WORKTREE'
-$delayPatch = 'E:\VPS\work\2026-10-12-clinepassbridge-scheduler-implementation\delay\compat\cpa-v8.0.13\local-429-delay.patch'
-git -C $cpaCheckout apply --check $delayPatch
-git -C $cpaCheckout apply $delayPatch
-$env:GOCACHE = 'E:\VPS\cache\go-build'
-$env:GOMODCACHE = 'E:\VPS\cache\go-mod'
-go -C $cpaCheckout test ./sdk/cliproxy/auth ./internal/pluginhost -run '^(TestClineLocalDelay|TestHostSchedulingCapabilities|TestHostRequestContext)' -count=1
-go -C $cpaCheckout build -o 'E:\VPS\work\YOUR-CPA-WORKTREE\cli-proxy-api.exe' ./cmd/server
+```sh
+CPA_CHECKOUT=/path/to/CLIProxyAPI
+DELAY_PATCH=/path/to/ClinePassBridge/compat/cpa-v8.0.13/local-429-delay.patch
+git -C "$CPA_CHECKOUT" apply --check "$DELAY_PATCH"
+git -C "$CPA_CHECKOUT" apply "$DELAY_PATCH"
+cd "$CPA_CHECKOUT"
+go test ./sdk/cliproxy/auth ./internal/pluginhost -run '^(TestClineLocalDelay|TestHostSchedulingCapabilities|TestHostRequestContext)' -count=1
+go build -o ./cli-proxy-api ./cmd/server
 ```
 
-测试用可注入 timer 推进 5 秒，不反复进行真实慢等待。覆盖作用域、真实上游 429、原 Retry-After、取消、deadline、执行/流式/计数最终边界，以及 callback 的插件/实例归属检查。Windows 无 GCC 时，上面的宿主编译使用当前可用的纯 Go 路径；Linux 动态插件加载与共享库构建由主代理整合后验证。
+PowerShell 示例：
+
+```powershell
+$cpaCheckout = 'C:\src\CLIProxyAPI'
+$delayPatch = 'C:\src\ClinePassBridge\compat\cpa-v8.0.13\local-429-delay.patch'
+git -C $cpaCheckout apply --check $delayPatch
+git -C $cpaCheckout apply $delayPatch
+go -C $cpaCheckout test ./sdk/cliproxy/auth ./internal/pluginhost -run '^(TestClineLocalDelay|TestHostSchedulingCapabilities|TestHostRequestContext)' -count=1
+go -C $cpaCheckout build -o (Join-Path $cpaCheckout 'cli-proxy-api.exe') ./cmd/server
+```
+
+测试用可注入 timer 推进 5 秒，覆盖作用域、真实上游 429、原 Retry-After、取消、deadline、执行/流式/计数最终边界，以及 callback 的插件/实例归属检查。Windows 纯 Go 宿主编译不代表 Linux 动态插件加载验证；部署前应按目标平台构建宿主和插件。
 
 回滚源码：在仅包含本补丁改动的副本中执行 `git -C $cpaCheckout apply -R $delayPatch`。这是开发交付，不含推送、部署或生产重启。
 
@@ -68,4 +78,4 @@ go -C $cpaCheckout build -o 'E:\VPS\work\YOUR-CPA-WORKTREE\cli-proxy-api.exe' ./
 
 - 插件：`go test ./internal/bridge -run '^TestLocalBackoff' -count=1` 通过，覆盖本地 quota/egress/team 标记、真实上游错误不等、一次 5 秒、取消、deadline、停止、挂起 callback、官方宿主降级与流式/非流式 Handle 钩子。
 - 宿主：上述两个纯 Go 包的定向测试通过；本地 Windows `go build ./cmd/server` 通过，编译副本包含既有 payload 规则定制。
-- 官方 `v8.0.13` 干净副本的 `git apply --check`、实际应用及相同定向测试均通过；测试不依赖 payload 定制。交付记录位于 VPS 工作区 `records/2026-10-12-clinepassbridge-local429-delay.md`。
+- 官方 `v8.0.13` 干净副本的 `git apply --check`、实际应用及相同定向测试均通过；测试不依赖 payload 定制。
