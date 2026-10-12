@@ -20,6 +20,7 @@ var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+|sk[-_])[a-z0-9_.-]+`)
 type Service struct {
 	configMu             sync.Mutex // Serializes configuration read-modify-save transactions.
 	rateLimits           rateLimiter
+	localBackoffClock    *backoffClock // Test clock; set before serving requests.
 	credentialMu         sync.Mutex
 	authFiles            map[string]string
 	mu                   sync.RWMutex
@@ -181,10 +182,15 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		if e := json.Unmarshal(raw, &r); e != nil {
 			return nil, e
 		}
+		r.deadline = time.Now().Add(time.Duration(s.config().TimeoutSeconds) * time.Second)
+		var result any
+		var err error
 		if method == "executor.execute_stream" {
-			return s.executeStream(r)
+			result, err = s.executeStream(r)
+		} else {
+			result, err = s.execute(r)
 		}
-		return s.execute(r)
+		return result, s.applyLocal429Backoff(r, err)
 	case "executor.count_tokens":
 		return nil, fail(501, "Cline Pass does not expose an exact token counting endpoint")
 	case "executor.http_request":
