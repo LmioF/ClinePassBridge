@@ -1,5 +1,5 @@
 diff --git a/internal/pluginhost/host_callbacks.go b/internal/pluginhost/host_callbacks.go
-index 4af872a..dca9eb3 100644
+index 4af872a9f83feb6df7de6ccef14a70022b0e8db7..dca9eb3b2b010104ddef33c20b4b7b18d8854cda 100644
 --- a/internal/pluginhost/host_callbacks.go
 +++ b/internal/pluginhost/host_callbacks.go
 @@ -145,6 +145,10 @@ func (h *Host) callFromPlugin(ctx context.Context, method string, request []byte
@@ -15,7 +15,7 @@ index 4af872a..dca9eb3 100644
  	case pluginabi.MethodHostModelExecuteStream:
 diff --git a/internal/pluginhost/host_request_context.go b/internal/pluginhost/host_request_context.go
 new file mode 100644
-index 0000000..a97d3dd
+index 0000000000000000000000000000000000000000..9575fc17c4138a08f90b385b68a1e4a8a491e182
 --- /dev/null
 +++ b/internal/pluginhost/host_request_context.go
 @@ -0,0 +1,61 @@
@@ -33,7 +33,7 @@ index 0000000..a97d3dd
 +// Optional scheduling callbacks; plugins on unmodified hosts fall back on an
 +// unsupported-method error without changing schema_version or registration.
 +func (h *Host) callHostSchedulingCapabilities() ([]byte, error) {
-+	return json.Marshal(map[string]any{
++	return marshalRPCResult(map[string]any{
 +		"local_delay_supported":     true,
 +		"request_context_supported": true,
 +		"local_delay_ms":            5000,
@@ -59,7 +59,7 @@ index 0000000..a97d3dd
 +	}{Supported: true, State: "active"}
 +	if !exists {
 +		response.State = "closed"
-+		return json.Marshal(response)
++		return marshalRPCResult(response)
 +	}
 +	if callerID := hostCallbackPluginIDFromContext(caller); callerID != "" && callerID != pluginID {
 +		return nil, fmt.Errorf("host callback ID does not belong to the calling plugin")
@@ -78,14 +78,14 @@ index 0000000..a97d3dd
 +	case instance != nil && instance.closed.Load():
 +		response.State = "closed"
 +	}
-+	return json.Marshal(response)
++	return marshalRPCResult(response)
 +}
 diff --git a/internal/pluginhost/host_request_context_test.go b/internal/pluginhost/host_request_context_test.go
 new file mode 100644
-index 0000000..f644ea3
+index 0000000000000000000000000000000000000000..f14df4762e585ba70a70b1d6cb4ce6020f2944f1
 --- /dev/null
 +++ b/internal/pluginhost/host_request_context_test.go
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,92 @@
 +package pluginhost
 +
 +import (
@@ -101,12 +101,13 @@ index 0000000..f644ea3
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	var caps struct {
++	type capabilities struct {
 +		LocalDelay bool `json:"local_delay_supported"`
 +		Context    bool `json:"request_context_supported"`
 +		DelayMS    int  `json:"local_delay_ms"`
 +	}
-+	if err = json.Unmarshal(raw, &caps); err != nil {
++	caps, err := decodeRPCEnvelope[capabilities](raw)
++	if err != nil {
 +		t.Fatal(err)
 +	}
 +	if !caps.LocalDelay || !caps.Context || caps.DelayMS != 5000 {
@@ -140,12 +141,13 @@ index 0000000..f644ea3
 +			if err != nil {
 +				t.Fatal(err)
 +			}
-+			var got struct {
++			type contextState struct {
 +				Supported bool       `json:"supported"`
 +				State     string     `json:"state"`
 +				Deadline  *time.Time `json:"deadline"`
 +			}
-+			if err = json.Unmarshal(raw, &got); err != nil {
++			got, err := decodeRPCEnvelope[contextState](raw)
++			if err != nil {
 +				t.Fatal(err)
 +			}
 +			if !got.Supported || got.State != state {
@@ -178,7 +180,7 @@ index 0000000..f644ea3
 +}
 diff --git a/sdk/cliproxy/auth/cline_local_delay.go b/sdk/cliproxy/auth/cline_local_delay.go
 new file mode 100644
-index 0000000..f8fefa5
+index 0000000000000000000000000000000000000000..f8fefa5b741551222d5083bdd5d29e65bbda33fd
 --- /dev/null
 +++ b/sdk/cliproxy/auth/cline_local_delay.go
 @@ -0,0 +1,72 @@
@@ -256,7 +258,7 @@ index 0000000..f8fefa5
 +}
 diff --git a/sdk/cliproxy/auth/cline_local_delay_test.go b/sdk/cliproxy/auth/cline_local_delay_test.go
 new file mode 100644
-index 0000000..953c202
+index 0000000000000000000000000000000000000000..953c202a43ab92c206dc46b662f27d2688442990
 --- /dev/null
 +++ b/sdk/cliproxy/auth/cline_local_delay_test.go
 @@ -0,0 +1,240 @@
@@ -501,7 +503,7 @@ index 0000000..953c202
 +	}
 +}
 diff --git a/sdk/cliproxy/auth/conductor_execution.go b/sdk/cliproxy/auth/conductor_execution.go
-index 9616a82..5892451 100644
+index 9616a82176e8c53e43abd6d09baf6625698d863b..5892451917d2b79c57664c4293938c8f10cc187b 100644
 --- a/sdk/cliproxy/auth/conductor_execution.go
 +++ b/sdk/cliproxy/auth/conductor_execution.go
 @@ -128,7 +128,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye

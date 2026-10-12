@@ -43,16 +43,18 @@ go -C $cpaCheckout test ./sdk/cliproxy/auth ./internal/pluginhost -run '^(TestCl
 go -C $cpaCheckout build -o (Join-Path $cpaCheckout 'cli-proxy-api.exe') ./cmd/server
 ```
 
-测试用可注入 timer 推进 5 秒，覆盖作用域、真实上游 429、原 Retry-After、取消、deadline、执行/流式/计数最终边界，以及 callback 的插件/实例归属检查。Windows 纯 Go 宿主编译不代表 Linux 动态插件加载验证；部署前应按目标平台构建宿主和插件。
+测试用可注入 timer 推进 5 秒，覆盖作用域、真实上游 429、原 Retry-After、取消、deadline、执行/流式/计数最终边界，以及 callback 的插件/实例归属检查。调度能力和请求 context 测试使用 `decodeRPCEnvelope` 校验完整 ABI 信封，避免裸 JSON 在函数测试中通过、动态插件实际解码失败。Windows 纯 Go 宿主编译不代表 Linux 动态插件加载验证；部署前应按目标平台构建宿主和插件。
 
 回滚源码：在仅包含本补丁改动的副本中执行 `git -C $cpaCheckout apply -R $delayPatch`。这是开发交付，不含推送、部署或生产重启。
 
 ## 可选回调契约
 
+以下示例为完整 ABI 响应，宿主使用 `marshalRPCResult(...)` 生成 `ok/result` 信封；插件先检查 `ok`，再读取 `result`。直接返回裸 JSON 会使插件将 callback 判定为失败，能力标志回落为 false，取消观察也随之降级。
+
 `host.scheduling.capabilities`，入参 `{}`，成功返回：
 
 ```json
-{"local_delay_supported":true,"request_context_supported":true,"local_delay_ms":5000}
+{"ok":true,"result":{"local_delay_supported":true,"request_context_supported":true,"local_delay_ms":5000}}
 ```
 
 `local_delay_supported` 表示 CPA 选号前本地 429 退避补丁已具备。插件 `(*Service).LocalBackoffCapabilities()` 会在 250ms 内返回探测结果；宿主未实现、报错、超时或插件停止时，宿主能力默认 false。探测失败不阻断业务。UI 将 `HostSelectionDelay` 映射到 `host.local_delay_supported`，将 `RequestCancelObservable` 用于显示取消观察能力。
@@ -60,7 +62,7 @@ go -C $cpaCheckout build -o (Join-Path $cpaCheckout 'cli-proxy-api.exe') ./cmd/s
 `host.request.context`，入参 `{"host_callback_id":"当前请求的回调ID"}`，成功返回：
 
 ```json
-{"supported":true,"state":"active","deadline":"2026-10-12T10:00:00Z"}
+{"ok":true,"result":{"supported":true,"state":"active","deadline":"2026-10-12T10:00:00Z"}}
 ```
 
 `deadline` 无宿主 deadline 时省略；`state` 为 `active` / `canceled` / `deadline_exceeded` / `closed`。宿主核对 callback 的插件和加载实例，不发网络请求，不占用 HTTP operation 或 stream。插件每 100ms 查询一次，至多保留一个进行中的查询。没有该回调的官方宿主仅支持插件 deadline/停止观察；UI 应明确展示这项差异。
@@ -79,3 +81,5 @@ go -C $cpaCheckout build -o (Join-Path $cpaCheckout 'cli-proxy-api.exe') ./cmd/s
 - 插件：`go test ./internal/bridge -run '^TestLocalBackoff' -count=1` 通过，覆盖本地 quota/egress/team 标记、真实上游错误不等、一次 5 秒、取消、deadline、停止、挂起 callback、官方宿主降级与流式/非流式 Handle 钩子。
 - 宿主：上述两个纯 Go 包的定向测试通过；本地 Windows `go build ./cmd/server` 通过，编译副本包含既有 payload 规则定制。
 - 官方 `v8.0.13` 干净副本的 `git apply --check`、实际应用及相同定向测试均通过；测试不依赖 payload 定制。
+
+最初修订的 callback 测试只解码裸 JSON，遗漏了 ABI 信封校验。当前修订修复了三处成功返回，并让调度能力及 active/canceled/deadline_exceeded/closed 状态测试通过 `decodeRPCEnvelope` 验证响应；动态插件与宿主的完整加载 smoke 仍需在部署验收中执行。
