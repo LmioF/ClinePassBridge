@@ -4,12 +4,28 @@ const schedulingTime = (value) => value ? new Date(value).toLocaleString() : '�
 function schedulingBadge(label, tone = '') { return `<span class="badge ${tone}">${esc(label)}</span>`; }
 const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, revision: 0 };
 function credentialSchedule(id) { return credentialScheduling.accounts.get(id); }
+function credentialQuotaPaused(item) { return credentialSchedule(item.id)?.quota_blocked ?? !!item.quota_paused; }
+function credentialToggleState(item) {
+  const paused = credentialQuotaPaused(item), manualDisabled = item.enabled === false;
+  return {
+    checked: !manualDisabled && !paused,
+    disabled: paused || credentialScheduling.pending.has(item.id),
+    label: manualDisabled ? '已停用' : paused ? '自动暂停' : '启用',
+    title: paused
+      ? (manualDisabled ? '已人工停用且额度耗尽；额度恢复后仍保持人工停用' : '额度耗尽已自动暂停；额度恢复后自动参与调度')
+      : '人工启停；额度耗尽时自动暂停'
+  };
+}
+function credentialToggleHTML(item) {
+  const state = credentialToggleState(item);
+  return `<label class="credential-toggle" title="${esc(state.title)}"><span class="credential-toggle-label">${state.label}</span><input type="checkbox" role="switch" class="credential-enabled" data-id="${esc(item.id)}" aria-label="${esc(item.label || item.id)} ${state.label}" ${state.checked ? 'checked' : ''} ${state.disabled ? 'disabled' : ''}><span class="toggle-track" aria-hidden="true"></span></label>`;
+}
 function credentialScheduleBadges(item) {
   const a = credentialSchedule(item.id), badges = [];
   if (item.enabled === false) badges.push(schedulingBadge('人工停用'));
-  if (a?.quota_blocked) badges.push(schedulingBadge('额度耗尽 · 自动暂停', 'bad'));
+  if (credentialQuotaPaused(item)) badges.push(schedulingBadge('额度耗尽 · 自动暂停', 'bad'));
   if (a?.persistence_error) badges.push(schedulingBadge('状态保存失败', 'bad'));
-  if (item.enabled !== false && !a?.quota_blocked) {
+  if (item.enabled !== false && !credentialQuotaPaused(item)) {
     if (!a) badges.push(schedulingBadge('调度状态待查询'));
     else if (a.host?.disabled) badges.push(schedulingBadge('宿主停用', 'warn'));
     else if (a.host?.unavailable || a.backoffs?.length) badges.push(schedulingBadge('冷却中', 'warn'));
@@ -27,13 +43,17 @@ function updateCredentialScheduling() {
   for (const row of $('credentialList').children) {
     const item = credentialView.items.find(a => a.id === row.dataset.id); if (!item) continue;
     const a = credentialSchedule(item.id);
-    row.classList.toggle('quota-paused', !!a?.quota_blocked);
+    row.classList.toggle('quota-paused', credentialQuotaPaused(item));
     row.querySelector('.credential-schedule-badges').innerHTML = credentialScheduleBadges(item);
     row.querySelector('.credential-schedule-detail').innerHTML = credentialScheduleDetail(item);
     const toggle = row.querySelector('.credential-enabled');
-    toggle.checked = item.enabled !== false;
-    toggle.disabled = credentialScheduling.pending.has(item.id);
-    row.querySelector('.reset-cooldown').disabled = item.enabled === false || !!a?.quota_blocked || credentialScheduling.pending.has(item.id);
+    const state = credentialToggleState(item);
+    toggle.checked = state.checked;
+    toggle.disabled = state.disabled;
+    toggle.setAttribute('aria-label', `${item.label || item.id} ${state.label}`);
+    toggle.closest('.credential-toggle').title = state.title;
+    row.querySelector('.credential-toggle-label').textContent = state.label;
+    row.querySelector('.reset-cooldown').disabled = item.enabled === false || state.disabled;
   }
 }
 async function loadCredentialScheduling() {
@@ -58,6 +78,8 @@ async function loadCredentialScheduling() {
 }
 async function changeCredentialScheduling(id, action, enabled) {
   if (credentialScheduling.pending.has(id)) return;
+  const item = credentialView.items.find(a => a.id === id);
+  if (!item || credentialQuotaPaused(item)) { updateCredentialScheduling(); return; }
   credentialScheduling.revision++;
   credentialScheduling.pending.add(id); updateCredentialScheduling();
   try {
