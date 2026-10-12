@@ -1644,6 +1644,8 @@
     }
     function renderCredentials(data, focusID = '') {
       if (data) {
+        credentialScheduling.revision++;
+        credentialScheduling.accounts.clear();
         credentialView.items = (Array.isArray(data.items) ? data.items : []).slice();
         const ids = new Set(credentialView.items.map((item) => item.id));
         for (const id of credentialView.usage.keys()) if (!ids.has(id)) credentialView.usage.delete(id);

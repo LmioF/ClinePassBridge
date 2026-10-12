@@ -2,7 +2,7 @@
 const schedulingView = { dirty: false, data: null, egress: null, loading: false, saving: false, editing: '', revision: 0 };
 const schedulingTime = (value) => value ? new Date(value).toLocaleString() : '—';
 function schedulingBadge(label, tone = '') { return `<span class="badge ${tone}">${esc(label)}</span>`; }
-const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, revision: 0 };
+const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, refreshQueued: false, revision: 0 };
 function credentialSchedule(id) { return credentialScheduling.accounts.get(id); }
 function credentialQuotaPaused(item) { return credentialSchedule(item.id)?.quota_blocked ?? !!item.quota_paused; }
 function credentialToggleState(item) {
@@ -42,7 +42,6 @@ function credentialScheduleDetail(item) {
 function updateCredentialScheduling() {
   for (const row of $('credentialList').children) {
     const item = credentialView.items.find(a => a.id === row.dataset.id); if (!item) continue;
-    const a = credentialSchedule(item.id);
     row.classList.toggle('quota-paused', credentialQuotaPaused(item));
     row.querySelector('.credential-schedule-badges').innerHTML = credentialScheduleBadges(item);
     row.querySelector('.credential-schedule-detail').innerHTML = credentialScheduleDetail(item);
@@ -57,7 +56,9 @@ function updateCredentialScheduling() {
   }
 }
 async function loadCredentialScheduling() {
-  if (credentialScheduling.loading || !authGate.verified || authGate.paused) return;
+  if (!authGate.verified || authGate.paused) return;
+  if (credentialScheduling.loading || credentialScheduling.pending.size) { credentialScheduling.refreshQueued = true; return; }
+  credentialScheduling.refreshQueued = false;
   credentialScheduling.loading = true;
   const revision = credentialScheduling.revision;
   try {
@@ -73,7 +74,7 @@ async function loadCredentialScheduling() {
   } catch (error) { $('credentialState').textContent = `调度状态读取失败：${error.message}`; }
   finally {
     credentialScheduling.loading = false;
-    if (revision !== credentialScheduling.revision && !credentialScheduling.pending.size) loadCredentialScheduling();
+    if ((credentialScheduling.refreshQueued || revision !== credentialScheduling.revision) && !credentialScheduling.pending.size) loadCredentialScheduling();
   }
 }
 async function changeCredentialScheduling(id, action, enabled) {
@@ -92,7 +93,7 @@ async function changeCredentialScheduling(id, action, enabled) {
       if (result.warning) toast(result.warning);
     }
   } catch (error) { toast(error.message); }
-  finally { credentialScheduling.pending.delete(id); updateCredentialScheduling(); await loadCredentialScheduling(); }
+  finally { credentialScheduling.revision++; credentialScheduling.pending.delete(id); updateCredentialScheduling(); await loadCredentialScheduling(); }
 }
 $('credentialList').addEventListener('change', (event) => {
   const input = event.target.closest('.credential-enabled');
