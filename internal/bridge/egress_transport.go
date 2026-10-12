@@ -318,7 +318,7 @@ func (s *Service) monitorEgressContext(p *egressManager, op *egressOperation) {
 				return
 			}
 			switch state.State {
-			case "canceled", "cancelled", "missing":
+			case "canceled", "cancelled", "missing", "closed":
 				op.cancel(context.Canceled)
 				return
 			case "deadline_exceeded", "expired":

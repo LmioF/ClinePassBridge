@@ -276,6 +276,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 	s.applyReasoningMapping(j, &entry)
 	start := time.Now()
 	defer func() {
+		_ = s.observeQuotaError(c, e)
 		entry.DurationMS = time.Since(start).Milliseconds()
 		entry.Status = statusOf(e)
 		entry.Error = safeError(e)
@@ -426,6 +427,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 	var lease *rateLease
 	failEarly := func(err error) (any, error) {
 		defer s.active.Done()
+		_ = s.observeQuotaError(c, err)
 		lease.finish(err)
 		entry.Status = statusOf(err)
 		entry.Error = safeError(err)
@@ -482,6 +484,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			if !started && err == nil {
 				err = fail(502, "upstream stream ended before any completion frame")
 			}
+			_ = s.observeQuotaError(c, err)
 			attempt.Status = statusOf(err)
 			attempt.Error = safeError(err)
 			logErrorDetails(&entry, &attempt, err)

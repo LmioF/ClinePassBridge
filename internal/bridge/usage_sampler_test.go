@@ -285,10 +285,11 @@ func TestUsageSamplerGroupsAccountKeysAndSkipsPaused(t *testing.T) {
 	paused := samplerCredential("paused", "k4")
 	paused.Disabled = true
 	proxied := samplerCredential("proxied", "k5")
-	proxied.ProxyURL = "http://proxy.invalid:8080"
+	proxied.ProxyURL = "http://127.0.0.1:1"
 	s := samplerService(t, host, samplerCredential("one", "k1"), samplerCredential("two", "k2"), samplerCredential("three", "k3"), paused, proxied)
 	startSampler(t, s)
 	waitSampler(t, samplerLedger(s, "ok", "one", "two", "three"))
+	waitSampler(t, samplerLedger(s, "unavailable", "proxied"))
 	if targets := s.usageSamplingTargets(time.Now()); len(targets) != 0 {
 		t.Fatalf("round one left work: %v", targets)
 	}

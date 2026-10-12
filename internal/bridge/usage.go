@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -67,16 +66,11 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 			entry = &usageCacheEntry{fingerprint: fingerprint, value: credentialUsage{ID: credentialID, Limits: []usageLimit{}}}
 			s.usageCache[credentialID] = entry
 		}
-		if c.Disabled || strings.TrimSpace(c.ProxyURL) != "" {
+		if c.Disabled {
 			value := entry.value
 			now := time.Now().UTC()
 			value.CheckedAt = &now
 			value.Status, value.Error = "disabled", "凭据已停用，暂停查询"
-			if !c.Disabled {
-				// CPA v7.3.12's management HTTP callback uses the global proxy and
-				// exposes no per-auth override. Never silently bypass an auth proxy.
-				value.Status, value.Error = "proxy_unsupported", "此 CPA 接口暂不支持凭据独立代理的用量查询"
-			}
 			value.Estimate = s.estimateViewLocked(c, value)
 			s.mu.Unlock()
 			return value, nil
@@ -156,7 +150,8 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 }
 
 func (s *Service) usageGET(callbackID string, c Credential, path string, deadline time.Time) (json.RawMessage, error) {
-	up, err := s.openUpstream(map[string]any{"host_callback_id": callbackID, "method": "GET", "url": s.config().BaseURL + path, "headers": headers(c)}, deadline)
+	payload := map[string]any{"host_callback_id": callbackID, "method": "GET", "url": s.config().BaseURL + path, "headers": headers(c)}
+	up, err := s.openUpstream(s.egressCredentialPayload(payload, c, true), deadline)
 	if err != nil {
 		return nil, err
 	}

@@ -115,10 +115,10 @@ func TestCredentialUsageCacheErrorsAndKeyReplacement(t *testing.T) {
 		t.Fatal("disabled credential queried")
 	}
 	c.Disabled = false
-	c.ProxyURL = "http://private-proxy"
+	c.ProxyURL = "http://fixture-user:fixture-password@127.0.0.1:1"
 	s.creds["one"] = c
 	proxy, _ := s.credentialUsage(req)
-	if proxy.Status != "proxy_unsupported" || calls != 5 {
+	if proxy.Status != "unavailable" || calls != 5 {
 		t.Fatal("credential proxy silently bypassed")
 	}
 }

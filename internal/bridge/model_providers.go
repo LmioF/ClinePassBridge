@@ -39,9 +39,6 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	if err != nil {
 		return managementJSON(statusOf(err), map[string]any{"error": safeError(err)})
 	}
-	if strings.TrimSpace(credential.ProxyURL) != "" {
-		return managementJSON(400, map[string]any{"error": "此 CPA 管理接口暂不支持凭据独立代理的探测，请选择使用全局代理的凭据"})
-	}
 
 	key := "providers|" + in.Model + "|" + credential.ID
 	s.mu.Lock()
@@ -60,6 +57,7 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	start := time.Now()
 	req := ExecutorRequest{
 		AuthID: credential.ID, Model: in.Model, HostCallbackID: r.HostCallbackID,
+		Metadata: map[string]any{"egress_management": true},
 		deadline: start.Add(time.Duration(cfg.TimeoutSeconds) * time.Second),
 		Payload:  []byte(`{"messages":[{"role":"user","content":"ok"}],"max_tokens":16}`),
 	}
@@ -87,6 +85,7 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 		}
 	}
 	duration := time.Since(start).Milliseconds()
+	_ = s.observeQuotaError(credential, err)
 	lease.finish(err)
 	logErrorDetails(&entry, &attempt, err)
 	attempt.Status, attempt.DurationMS = statusOf(err), duration
@@ -132,14 +131,14 @@ func (s *Service) probeCredential(id string) (Credential, error) {
 		if !ok {
 			return c, fail(404, "credential not found")
 		}
-		if c.APIKey == "" || c.Disabled {
+		if c.APIKey == "" || c.Disabled || (quotaAutoPauseEnabled(s.cfg) && normalizeQuotaCredential(c).QuotaBlock != nil) {
 			return c, fail(400, "该凭据已停用或缺少 API key")
 		}
 		return c, nil
 	}
 	candidates := make([]Credential, 0, len(s.creds))
 	for _, c := range s.creds {
-		if c.APIKey != "" && !c.Disabled {
+		if c.APIKey != "" && !c.Disabled && !(quotaAutoPauseEnabled(s.cfg) && normalizeQuotaCredential(c).QuotaBlock != nil) {
 			candidates = append(candidates, c)
 		}
 	}

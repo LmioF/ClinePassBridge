@@ -120,32 +120,17 @@ func TestConfigFidelityUnrotatedCredentialSavePreservesUnknown(t *testing.T) {
 				t.Fatal("fixture credential must have an unrotated identity")
 			}
 			beforeFields := configFidelityCredentialFields(t, f.original[filename])
-			var savedPayload []byte
 			saveCalls := 0
 			f.s.SetHost(func(method string, payload, out any) error {
-				if method != "host.auth.save" {
-					return fmt.Errorf("unexpected host callback %s", method)
-				}
-				request, ok := payload.(map[string]any)
-				if !ok || request["name"] != filename {
-					return fmt.Errorf("credential save used an unexpected filename or payload type")
-				}
-				raw, ok := request["json"].(json.RawMessage)
-				if !ok || !json.Valid(raw) {
-					return fmt.Errorf("credential save did not supply valid raw JSON")
-				}
 				saveCalls++
-				savedPayload = append([]byte(nil), raw...)
-				// Model the host's full-file save, without decoding through
-				// float64 or printing any credential JSON.
-				return os.WriteFile(filepath.Join(f.s.authDir, filename), raw, 0600)
+				return fmt.Errorf("physical credential must use the plugin parser via its file watcher, got %s", method)
 			})
 			affinityRequest(t, f, ManagementRequest{
 				Method: "PUT", Path: apiBase + "/credentials",
 				Query: url.Values{"id": {credentialID}}, Body: []byte(tc.body),
 			}, 200)
-			if saveCalls != 1 {
-				t.Fatalf("host.auth.save calls = %d, want 1", saveCalls)
+			if saveCalls != 0 {
+				t.Fatalf("generic host save bypassed the quota-aware parser: %d calls", saveCalls)
 			}
 			savedDisk, err := os.ReadFile(filepath.Join(f.s.authDir, filename))
 			if err != nil {
@@ -159,7 +144,6 @@ func TestConfigFidelityUnrotatedCredentialSavePreservesUnknown(t *testing.T) {
 				name string
 				raw  []byte
 			}{
-				{name: "host-payload", raw: savedPayload},
 				{name: "saved-file", raw: savedDisk},
 			} {
 				t.Run(saved.name, func(t *testing.T) {

@@ -105,7 +105,7 @@ func TestEgressOptionalHostContextAndQuiescedRecovery(t *testing.T) {
 			}
 			state := "active"
 			if disconnected.Load() {
-				state = "canceled"
+				state = "closed" // Host removes completed/canceled callback contexts.
 			}
 			response = map[string]any{"supported": true, "state": state}
 		default:

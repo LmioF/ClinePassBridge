@@ -3,7 +3,6 @@ package bridge
 import (
 	"net/url"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -59,7 +58,7 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(s.creds))
 	for id, c := range s.creds {
-		if !c.Disabled && !s.revoked[id] && c.APIKey != "" && strings.TrimSpace(c.ProxyURL) == "" {
+		if !c.Disabled && !s.revoked[id] && c.APIKey != "" {
 			ids = append(ids, id)
 		}
 	}
@@ -108,8 +107,8 @@ func (s *Service) sampleUsage() {
 		go func() {
 			defer workers.Done()
 			for id := range jobs {
-				// Empty callback ID deliberately uses CPA's background context,
-				// global proxy and the same bounded/closeable HTTP stream path.
+				// Empty callback ID uses the bounded background request path;
+				// configured credential proxies and the shared pool still apply.
 				_, _ = s.credentialUsage(ManagementRequest{Query: url.Values{"id": {id}}})
 			}
 		}()

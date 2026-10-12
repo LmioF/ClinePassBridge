@@ -118,6 +118,8 @@ func requestErrorRules() []RequestErrorRule {
 		{Status: 500, Match: []string{"empty response content"}, Action: "stop"},
 		{Status: 429, Match: []string{rateLimitMarker}, Action: "stop"},
 		{Status: 429, Match: []string{quotaBlockMarker}, Action: "continue"},
+		{Status: 429, Match: []string{"[clinepassbridge:egress_unavailable]"}, Action: "stop"},
+		{Status: 429, Match: []string{"[clinepassbridge:ip_rate_limit]"}, Action: "stop"},
 	}
 }
 

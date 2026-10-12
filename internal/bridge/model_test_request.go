@@ -94,6 +94,7 @@ func (s *Service) testModel(r ManagementRequest) (any, error) {
 	}
 	req := ExecutorRequest{
 		AuthID: in.CredentialID, Model: in.Model, HostCallbackID: r.HostCallbackID,
+		Metadata: map[string]any{"egress_management": true},
 		deadline: start.Add(time.Duration(cfg.TimeoutSeconds) * time.Second),
 		Payload:  jsonBytes(body),
 	}
@@ -105,10 +106,6 @@ func (s *Service) testModel(r ManagementRequest) (any, error) {
 	s.applyReasoningMapping(j, &entry)
 	attempt := Attempt{Mode: "model-test", Provider: "unknown", ProviderSource: "not_reported"}
 	diagnostics := &modelTestDiagnostics{limit: cfg.MaxResponseBytes}
-	// CPA's management callback supports only the global proxy, not auth-specific proxies.
-	if err == nil && strings.TrimSpace(credential.ProxyURL) != "" {
-		err = fail(400, "此 CPA 管理接口暂不支持凭据独立代理的模型测试，请选择使用全局代理的凭据")
-	}
 	var lease *rateLease
 	if err == nil {
 		lease, err = s.rateLimits.acquire(credential, upstream)
@@ -126,6 +123,7 @@ func (s *Service) testModel(r ManagementRequest) (any, error) {
 		}
 	}
 	duration := time.Since(start).Milliseconds()
+	_ = s.observeQuotaError(credential, err)
 	lease.finish(err)
 	logErrorDetails(&entry, &attempt, err)
 	detail := ""

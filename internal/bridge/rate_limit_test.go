@@ -237,12 +237,12 @@ func TestExistingCredentialRulesAreRefreshedInMetadataAndStorage(t *testing.T) {
 	auth := authData(c, "one.json").(map[string]any)
 	var saved Credential
 	_ = json.Unmarshal(auth["StorageJSON"].([]byte), &saved)
-	if saved.APIKey != c.APIKey || saved.ProxyURL != c.ProxyURL || !saved.Disabled || len(saved.RequestScopedErrors) != 2 {
+	if saved.APIKey != c.APIKey || saved.ProxyURL != c.ProxyURL || !saved.Disabled || len(saved.RequestScopedErrors) != 5 {
 		t.Fatalf("credential fields/rules changed: %v", saved.RequestScopedErrors)
 	}
 	meta := auth["Metadata"].(map[string]any)
 	rules := meta["request_scoped_errors"].([]any)
-	if len(rules) != 2 || object(rules[1])["status"] != float64(429) || object(rules[1])["action"] != "stop" {
+	if len(rules) != 5 || object(rules[1])["status"] != float64(429) || object(rules[1])["action"] != "stop" || object(rules[2])["action"] != "continue" || object(rules[3])["action"] != "stop" || object(rules[4])["action"] != "stop" {
 		t.Fatalf("CPA metadata rules=%#v", rules)
 	}
 }
