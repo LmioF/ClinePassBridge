@@ -398,6 +398,40 @@
     .credential-toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 3px; }
     .credential-toggle:has(input:disabled) { opacity: .55; cursor: wait; }
     @media (prefers-reduced-motion: reduce) { .toggle-track, .toggle-track::after { transition: none; } }
+    #errorRulesDialog { max-width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+    #errorRulesDialog .panel-head { margin-bottom: 16px; gap: 12px; }
+    #errorRulesList { display: grid; gap: 12px; }
+    .error-rule-card { border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+    .error-rule-head, .error-rules-tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .error-rule-head strong { font-size: 13px; color: var(--muted); font-weight: 500; }
+    .error-rule-description { margin: -4px 0 0; line-height: 1.65; }
+    #errorRuleHelpDialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+    .error-action-guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+    .error-action-guide section { border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+    dialog .error-action-guide h3 { margin: 0 0 8px; color: var(--ink); }
+    .error-action-guide p { margin: 6px 0 0; line-height: 1.7; }
+    .error-action-note { margin-top: 16px; line-height: 1.7; }
+    .error-rule-fields { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; }
+    .error-rule-conditions { display: grid; gap: 8px; }
+    .error-rule-condition { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+    .error-rule-condition textarea { min-height: 38px; resize: vertical; }
+    .error-rule-card .row-actions { gap: 6px; }
+    .error-rule-card .icon-button { width: 34px; padding: 6px; }
+    .error-rule-card .error-rule-add { justify-self: start; }
+    .error-rules-tools { margin-top: 14px; flex-wrap: wrap; }
+    #errorRulesDialog .dialog-actions { position: sticky; bottom: -24px; background: var(--surface); padding: 14px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+    #errorRulesFailures { margin-top: 12px; overflow-wrap: anywhere; }
+    #errorRulesFailures ul { margin: 6px 0 0; padding-left: 20px; font-size: 12px; }
+    @media (max-width: 520px) {
+      .error-action-guide { grid-template-columns: 1fr; }
+      #errorRulesDialog { padding: 16px; }
+      #errorRulesDialog .panel-head { flex-wrap: wrap; }
+      #errorRulesDialog .dialog-actions { bottom: -16px; }
+      .error-rule-card { padding: 12px; }
+      .error-rule-fields { grid-template-columns: 90px minmax(0, 1fr); }
+      .error-rule-condition { grid-template-columns: minmax(0, 1fr) auto; }
+      .error-rule-condition .condition-kind-field { grid-column: 1 / -1; }
+    }
   </style>
 </head>
 <body>
@@ -501,7 +535,7 @@
 
     <section id="credentialsPanel" role="tabpanel" aria-labelledby="credentialsTab" hidden>
       <div class="panel credentials-panel">
-        <div class="panel-head"><div><h2 title="按优先级从高到低排序；额度耗尽自动暂停，复查确认恢复后重新调度。人工停用独立保留。">凭据管理</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
+        <div class="panel-head"><div><h2 title="按优先级从高到低排序；额度耗尽自动暂停，复查确认恢复后重新调度。人工停用独立保留。">凭据管理</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p></div><div class="row-actions"><button class="button compact" id="openErrorRules" type="button">错误规则</button><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div></div>
         <div class="toolbar credential-tools">
           <input class="control search" id="credentialSearch" type="search" placeholder="搜索凭据名称或 ID" aria-label="搜索凭据">
           <button class="button compact" id="refreshUsage" type="button">刷新本页用量</button>
@@ -593,6 +627,27 @@
     <div class="candidate-list" id="candidateList" aria-live="polite"></div>
     <p class="inline-state" id="candidateState" role="status"></p>
     <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled>应用更改</button></div>
+  </dialog>
+  <dialog id="errorRulesDialog" aria-labelledby="errorRulesTitle">
+    <div class="panel-head"><h2 id="errorRulesTitle" title="按顺序采用首条匹配的规则；同一状态码下，任意条件命中即可。">错误规则</h2><div class="row-actions"><span class="badge">全部 ClinePassBridge 凭据</span><button class="button compact" id="openErrorRuleHelp" type="button" aria-haspopup="dialog">动作说明</button></div></div>
+    <form id="errorRulesForm">
+      <div id="errorRulesList"></div>
+      <div class="error-rules-tools"><button class="button compact" id="addErrorRule" type="button">＋ 新增规则</button><button class="button compact" id="resetErrorRules" type="button" title="恢复为默认五条规则，保存后应用到全部账号">恢复默认规则</button></div>
+      <p class="inline-state" id="errorRulesState" role="status" aria-live="polite"></p>
+      <div id="errorRulesFailures" class="notice error" role="alert" hidden></div>
+      <div class="dialog-actions"><button class="button" id="retryErrorRules" type="button" hidden>重试同步</button><button class="button" id="closeErrorRules" type="button">关闭</button><button class="button primary" id="saveErrorRules" type="submit">保存并同步所有账号</button></div>
+    </form>
+  </dialog>
+  <dialog class="dialog-wide" id="errorRuleHelpDialog" aria-labelledby="errorRuleHelpTitle">
+    <h2 id="errorRuleHelpTitle">错误规则 · 动作说明</h2>
+    <div class="error-action-guide">
+      <section><h3>停止</h3><p><b>当前请求：</b>停止重试和切换凭据，将错误返回客户端。</p><p><b>后续调度：</b>不因这条规则新增 CPA 冷却。</p></section>
+      <section><h3>停止并冷却</h3><p><b>当前请求：</b>停止重试和切换凭据，将错误返回客户端。</p><p><b>后续调度：</b>将失败的凭据或模型暂时排除出调度。</p></section>
+      <section><h3>继续</h3><p><b>当前请求：</b>按 CPA 调度逻辑尝试后续模型或其他凭据。</p><p><b>后续调度：</b>不因这条规则新增 CPA 冷却。</p></section>
+      <section><h3>继续并冷却</h3><p><b>当前请求：</b>将失败对象冷却，再尝试其他可用候选。</p><p><b>后续调度：</b>冷却期间跳过失败对象。</p></section>
+    </div>
+    <p class="error-action-note">停止不等于永久禁用；继续仍受可用账号和重试限制影响。冷却时长由错误类型、上游 Retry-After 和 CPA 配置决定，不是延迟响应。插件自身的额度暂停与限流保护仍会生效。</p>
+    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus>知道了</button></form>
   </dialog>
   <dialog id="credentialDialog" aria-labelledby="credentialDialogTitle">
     <h2 id="credentialDialogTitle">添加凭据</h2>
@@ -2149,6 +2204,7 @@
       catch (error) { toast(`删除失败：${error.message}`); button.disabled = false; }
     });
     /*__SCHEDULING_MODULE__*/
+    /*__ERROR_RULES_MODULE__*/
     $('rememberAuth').checked = window.PassBridgeRememberAuth?.() || false;
     restoreStatisticsRange();
     if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');
