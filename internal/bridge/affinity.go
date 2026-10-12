@@ -87,7 +87,7 @@ func (s *Service) saveCredential(c, baseline Credential) error {
 	if !bytes.Equal(jsonBytes(current), jsonBytes(baseline)) {
 		return fail(409, "credential changed before save; refresh and retry")
 	}
-	c.RequestScopedErrors = requestErrorRules()
+	c.RequestScopedErrors = s.currentErrorRules()
 	c = normalizeQuotaCredential(c)
 	if current.APIKey != c.APIKey {
 		c.QuotaRevision = ""
@@ -136,6 +136,7 @@ func (s *Service) saveCredential(c, baseline Credential) error {
 		delete(s.quotaWriteErrors, c.ID)
 	}
 	s.creds[c.ID] = c
+	s.markErrorRulesSyncedLocked(c.ID, c.RequestScopedErrors, nil)
 	s.mu.Unlock()
 	return nil
 }

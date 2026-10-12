@@ -234,7 +234,7 @@ func TestShutdownDuringPreflight(t *testing.T) {
 
 func TestExistingCredentialRulesAreRefreshedInMetadataAndStorage(t *testing.T) {
 	c := Credential{Type: Provider, ID: "one", APIKey: "fixture", Disabled: true, ProxyURL: "http://localhost:1234", RequestScopedErrors: []RequestErrorRule{{Status: 500, Match: []string{"empty response content"}, Action: "stop"}}}
-	auth := authData(c, "one.json").(map[string]any)
+	auth := NewService().authData(c, "one.json").(map[string]any)
 	var saved Credential
 	_ = json.Unmarshal(auth["StorageJSON"].([]byte), &saved)
 	if saved.APIKey != c.APIKey || saved.ProxyURL != c.ProxyURL || !saved.Disabled || len(saved.RequestScopedErrors) != 5 {

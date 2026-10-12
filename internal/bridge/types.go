@@ -106,11 +106,13 @@ type Credential struct {
 	QuotaBlock          *QuotaBlock        `json:"quota_block,omitempty"`
 	QuotaIdentity       *QuotaIdentity     `json:"quota_identity,omitempty"`
 	QuotaRevision       string             `json:"quota_revision,omitempty"`
+	extraFields         map[string]json.RawMessage
 }
 type RequestErrorRule struct {
-	Status int      `json:"status"`
-	Match  []string `json:"match"`
-	Action string   `json:"action"`
+	Status      int      `json:"status"`
+	Match       []string `json:"match,omitempty"`
+	MatchRegexr []string `json:"match-regexr,omitempty"`
+	Action      string   `json:"action"`
 }
 
 func requestErrorRules() []RequestErrorRule {

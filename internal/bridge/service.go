@@ -51,10 +51,13 @@ type Service struct {
 	estimateActivity     map[string]estimateActivity
 	estimateWriteError   string
 	quotaWriteErrors     map[string]string
+	errorRules           []RequestErrorRule
+	errorRuleSynced      map[string]string
+	errorRuleSyncErrors  map[string]string
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{}), usageCache: map[string]*usageCacheEntry{}, usageSlots: make(chan struct{}, 3), usageWake: make(chan struct{}, 1)}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{}), usageCache: map[string]*usageCacheEntry{}, usageSlots: make(chan struct{}, 3), usageWake: make(chan struct{}, 1), errorRules: requestErrorRules(), errorRuleSynced: map[string]string{}, errorRuleSyncErrors: map[string]string{}}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {
@@ -131,9 +134,20 @@ func (s *Service) configure(raw json.RawMessage) (err error) {
 	if e := os.MkdirAll(cfg.DataDir, 0700); e != nil {
 		return e
 	}
+	rules, err := loadErrorRules(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	s.credentialMu.Lock()
+	s.authFileMu.Lock()
 	s.mu.Lock()
 	defer func() {
 		s.mu.Unlock()
+		s.authFileMu.Unlock()
+		if _, statErr := os.Stat(filepath.Join(cfg.DataDir, errorRulesFile)); err == nil && statErr == nil {
+			s.syncErrorRulesLocked()
+		}
+		s.credentialMu.Unlock()
 		if err == nil {
 			err = s.reconcileQuotaScheduling()
 		}
@@ -150,6 +164,7 @@ func (s *Service) configure(raw json.RawMessage) (err error) {
 		s.egress = newEgressManager()
 	}
 	s.cfg = cfg
+	s.errorRules = rules
 	if !s.loaded {
 		if err := s.loadEgressLocked(); err != nil {
 			return err
@@ -258,7 +273,7 @@ func (s *Service) refreshRegistrations() error {
 		baseline := c
 		// CPA skips unchanged files. A model revision makes watcher refreshes reliable.
 		c.ModelRevision = hex.EncodeToString(revision[:])
-		c.RequestScopedErrors = requestErrorRules()
+		c.RequestScopedErrors = s.currentErrorRules()
 		if e := s.saveCredential(c, baseline); e != nil {
 			return e
 		}
@@ -287,12 +302,15 @@ func (s *Service) resolveModel(model string) (string, error) {
 	return "", fail(400, "model is not enabled in ClinePassBridge: "+model)
 }
 func authData(c Credential, filename string) any {
-	c.RequestScopedErrors = requestErrorRules()
 	// Metadata and stored auth JSON must agree, including after hot reload.
 	var rules []any
 	_ = json.Unmarshal(jsonBytes(c.RequestScopedErrors), &rules)
 	c = normalizeQuotaCredential(c)
 	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled || c.QuotaBlock != nil, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
+}
+func (s *Service) authData(c Credential, filename string) any {
+	c.RequestScopedErrors = s.currentErrorRules()
+	return authData(c, filename)
 }
 func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	s.authFileMu.Lock()
@@ -331,7 +349,7 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	if c.Label == "" {
 		c.Label = c.ID
 	}
-	c.RequestScopedErrors = requestErrorRules()
+	s.applyParsedErrorRules(&c, dir, r.FileName, r.RawJSON)
 	staleQuota := !quotaStateEqual(c, normalizeQuotaCredential(c))
 	c = normalizeQuotaCredential(c)
 	s.mu.Lock()
@@ -357,7 +375,7 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	}
 	s.mu.Unlock()
 	s.wakeUsageSampler()
-	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName)}, nil
+	return map[string]any{"Handled": true, "Auth": s.authData(c, r.FileName)}, nil
 }
 func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	var r struct{ StorageJSON []byte }
@@ -381,7 +399,7 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	if filename == "" {
 		filename = c.ID + ".json"
 	}
-	return map[string]any{"Auth": authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
+	return map[string]any{"Auth": s.authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	var c Credential

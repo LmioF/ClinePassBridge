@@ -22,13 +22,13 @@ const apiBase = "/v0/management/clinepassbridge"
 func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	s.startUsageSampler()
 	routes := []map[string]string{}
-	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage", "scheduling", "egress"} {
+	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage", "scheduling", "egress", "error-rules"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset", "scheduling/reset"} {
+	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset", "scheduling/reset", "error-rules/sync", "error-rules/reset"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling/credential", "egress"} {
+	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling/credential", "egress", "error-rules"} {
 		routes = append(routes, map[string]string{"Method": "PUT", "Path": apiBase + "/" + p})
 	}
 	routes = append(routes, map[string]string{"Method": "DELETE", "Path": apiBase + "/credentials"})
@@ -63,6 +63,13 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		b = []byte(strings.ReplaceAll(string(b), "/*__SCHEDULING_MODULE__*/", string(schedulingJS)))
+		if strings.Contains(string(b), "/*__ERROR_RULES_MODULE__*/") {
+			errorRulesJS, err := ui.ReadFile("ui/error-rules.js")
+			if err != nil {
+				return nil, err
+			}
+			b = []byte(strings.ReplaceAll(string(b), "/*__ERROR_RULES_MODULE__*/", string(errorRulesJS)))
+		}
 		return ManagementResponse{StatusCode: 200, Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}, "X-Content-Type-Options": []string{"nosniff"}}, Body: b}, nil
 	}
 	if !strings.HasPrefix(r.Path, apiBase+"/") {
@@ -74,6 +81,8 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		defer s.configMu.Unlock()
 	}
 	switch r.Method + " " + p {
+	case "GET /error-rules", "PUT /error-rules", "POST /error-rules/sync", "POST /error-rules/reset":
+		return s.errorRulesManagement(r)
 	case "GET /scheduling":
 		return s.schedulingResponse()
 	case "PUT /scheduling/credential":
@@ -296,7 +305,7 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	if len(in.Label) > 100 {
 		return managementJSON(400, map[string]any{"error": "label exceeds 100 characters"})
 	}
-	c := Credential{Type: Provider, ID: PluginID + "-" + id(), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: requestErrorRules(), Priority: normalizedPriority(in.Priority)}
+	c := Credential{Type: Provider, ID: PluginID + "-" + id(), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: s.currentErrorRules(), Priority: normalizedPriority(in.Priority)}
 	if c.Label == "" {
 		c.Label = "Cline Pass"
 	}
@@ -308,6 +317,7 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	}
 	s.mu.Lock()
 	s.creds[c.ID] = c
+	s.markErrorRulesSyncedLocked(c.ID, c.RequestScopedErrors, nil)
 	s.authFiles[c.ID] = c.ID + ".json"
 	if saved.Path != "" {
 		s.authDir = filepath.Dir(saved.Path)
@@ -360,7 +370,7 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 	if filepath.Base(filename) != filename || strings.ContainsAny(filename, "/\\") {
 		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
 	}
-	c.RequestScopedErrors = requestErrorRules()
+	c.RequestScopedErrors = s.currentErrorRules()
 	if e := s.saveCredential(c, baseline); e != nil {
 		return managementJSON(500, map[string]any{"error": "credential persistence failed"})
 	}
