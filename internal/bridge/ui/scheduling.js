@@ -152,6 +152,8 @@ function openEgressDialog(id = '') {
   $('egressDialog').showModal(); $('egressLabel').focus();
 }
 $('egressTab').addEventListener('click', () => setTab('egress'));
+$('openEgressGuide').addEventListener('click', () => $('egressGuideDialog').showModal());
+$('closeEgressGuide').addEventListener('click', () => $('egressGuideDialog').close());
 $('refreshEgress').addEventListener('click', loadEgress);
 $('openEgress').addEventListener('click', () => openEgressDialog());
 $('egressControls').addEventListener('input', () => { schedulingView.dirty = true; });

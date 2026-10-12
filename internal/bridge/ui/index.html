@@ -319,6 +319,29 @@
     .schedule-tools input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
     #egressWait { width: 80px; }
     #egressPanel > .panel { margin-top: 16px; }
+    #egressPanel .panel-head { flex-wrap: wrap; margin-bottom: 12px; }
+    .egress-experimental { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    #egressGuideDialog { width: min(760px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto; }
+    .egress-guide-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; background: var(--surface); border-bottom: 1px solid var(--line); }
+    #egressGuideDialog h2 { margin: 0; }
+    .egress-guide-body { padding: 4px 24px 24px; font-size: 13px; line-height: 1.8; }
+    .egress-guide-body h3 { margin: 22px 0 10px; color: var(--ink); font-size: 14px; }
+    .egress-guide-body p { margin: 8px 0; }
+    .egress-guide-body ol { padding-left: 22px; margin: 8px 0; }
+    .egress-guide-body li + li { margin-top: 6px; }
+    .egress-guide-fields { margin: 0; }
+    .egress-guide-fields > div { display: grid; grid-template-columns: 126px minmax(0, 1fr); gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .egress-guide-fields dt { font-weight: 650; }
+    .egress-guide-fields dd { margin: 0; color: var(--muted); }
+    .egress-guide-body code { overflow-wrap: anywhere; font-size: 12px; }
+    .egress-guide-body details { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .egress-guide-body summary { cursor: pointer; font-weight: 650; }
+    .egress-guide-body details p { color: var(--muted); }
+    @media (max-width: 520px) {
+      .egress-guide-head { padding: 16px; }
+      .egress-guide-body { padding: 0 16px 20px; }
+      .egress-guide-fields > div { grid-template-columns: 1fr; gap: 4px; }
+    }
     @media (max-width: 740px) {
       .schedule-account, .egress-row { grid-template-columns: minmax(0, 1fr); }
       .schedule-account > .row-actions, .egress-row > .row-actions { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
@@ -456,7 +479,8 @@
 
     <section id="egressPanel" role="tabpanel" aria-labelledby="egressTab" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>代理池</h2><div class="row-actions"><button class="button compact" id="refreshEgress" type="button">刷新状态</button><button class="button compact primary" id="openEgress" type="button">添加出口</button></div></div>
+        <div class="panel-head"><h2>代理池</h2><div class="row-actions"><button class="button compact" id="openEgressGuide" type="button" aria-haspopup="dialog" aria-controls="egressGuideDialog">使用指南</button><button class="button compact" id="refreshEgress" type="button">刷新状态</button><button class="button compact primary" id="openEgress" type="button">添加出口</button></div></div>
+        <p class="egress-experimental"><span class="badge warn">实验性功能</span><span>建议先用少量请求测试，确认稳定后再用于日常流量。</span></p>
         <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后立即返回本地 429。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
         <div id="egressList"><div class="empty">正在读取出口…</div></div>
         <p class="inline-state" id="egressState" role="status"></p>
@@ -589,6 +613,34 @@
     </section>
   </main>
 
+  <dialog id="egressGuideDialog" aria-labelledby="egressGuideTitle">
+    <div class="egress-guide-head"><h2 id="egressGuideTitle">代理池使用指南</h2><button class="button compact" id="closeEgressGuide" type="button" autofocus>关闭</button></div>
+    <div class="egress-guide-body">
+      <h3>第一次用，从一条代理开始</h3>
+      <ol>
+        <li>点「添加出口」，填入一条能访问 Cline 的代理地址。先保留默认的每 60 秒 60 次、最大在飞 4 个，保存出口。</li>
+        <li>勾选「启用出口池」，点「保存策略」。用少量请求确认能正常回复，再逐步增加出口和流量。</li>
+        <li>遇到问题，可以关闭「启用出口池」并保存，恢复 CPA 原来的代理路径。已添加的出口会保留。</li>
+      </ol>
+      <h3>这些字段怎么填</h3>
+      <dl class="egress-guide-fields">
+        <div><dt>启用出口池</dt><dd>总开关。开启后，没有独立代理的账号会轮流使用池内可用出口。请先添加出口；空池开启后，请求会排队并最终报“代理池无容量”。</dd></div>
+        <div><dt>排队上限</dt><dd>所有可选出口都忙时，最多等多久，范围 0–60 秒，默认 5 秒。有空位就马上发送；到时还没空位，返回本地 429。填 0 表示不排队。这不是每次请求固定等 5 秒。</dd></div>
+        <div><dt>名称</dt><dd>给自己看的备注，例如“东京出口 A”。方便区分即可，不影响调度。</dd></div>
+        <div><dt>代理地址</dt><dd>支持 HTTP、HTTPS、SOCKS5、SOCKS5H，例如 <code>http://代理主机:端口</code> 或 <code>socks5h://用户名:密码@代理主机:端口</code>。填 <code>direct</code> 表示直连。这里填的是 CPA 所在服务器能连接的地址；容器里的 <code>127.0.0.1</code> 指向容器自己。用户名或密码含 @、: 等特殊字符时需做 URL 编码。编辑已有出口时留空，会保留原地址和密码。</dd></div>
+        <div><dt>出口分组</dt><dd>同一个公网 IP 的代理填同一组，例如 <code>tokyo-a</code>，它们会共享请求数、并发和冷却。换端口或用户名不一定换了 IP。不同公网 IP 分开填；留空会创建独立分组。插件不会自动检测出口 IP。</dd></div>
+        <div><dt>每 60 秒请求数</dt><dd>这一组在最近 60 秒内最多发多少次请求，默认 60。时间窗口会向前滚动，不是每逢整分钟清零。用量查询、模型测试和实际发出的失败请求也计数；同组出口请填相同数值。</dd></div>
+        <div><dt>最大在飞请求</dt><dd>这一组同时最多有多少个尚未结束的请求，默认 4。流式回复没结束，就一直占一个位置。它和每分钟请求数是两回事；同组出口请填相同数值。</dd></div>
+        <div><dt>启用此出口</dt><dd>只控制当前这一条代理。取消勾选并保存后，后续请求会跳过它，配置仍保留。</dd></div>
+      </dl>
+      <h3>看状态、排问题</h3>
+      <details><summary>“最近 60 秒”和“在飞”怎么看？</summary><p>显示的是整个出口组的数据，所以同组的几条代理会显示相同数字，不要再把它们相加。页面约每 15 秒刷新一次，也可点「刷新状态」；很快结束的请求可能来不及显示在“在飞”里。</p><p>例如两个入口实际都是同一个 IP，各填 60 次、4 个在飞并归入同组，那么这一组总共还是 60 次、4 个在飞。只有确认是不同出口 IP，才适合分组单独计算。</p></details>
+      <details><summary>报 429，是账号没额度还是代理忙？</summary><p>“代理池无容量”表示本地暂时没有空位，这次还没发给 Cline。“出口 IP 限流”表示上游明确限制了该出口，整组会暂时冷却，默认 60 秒；上游给了等待时间时优先采用。</p><p>账号额度耗尽会暂停账号，团队限流另行处理。普通的未知 429 不会一律算成 IP 限流。具体是否继续尝试其他账号，还要看「凭据管理 → 错误规则」。</p></details>
+      <details><summary>代理连不上，会自动换一条吗？</summary><p>选出口时会跳过冷却或满载的组。但发出请求后连接失败，目前没有通用的自动换代理重发功能，也不会偷偷改成直连。先停用有问题的出口，再检查代理连通性。</p><p>目前没有自动测速、健康检查或故障节点自动淘汰。这里的默认数值只是插件的起始配置，不代表 Cline 承诺的容量。</p></details>
+      <details><summary>Resin、订阅和账号独立代理怎么用？</summary><p>Resin 按普通 HTTP 或 SOCKS 代理接入即可，其他代理服务也一样。这里逐条填写代理地址，暂不支持导入订阅或自动读取 Resin 节点列表；填一个网关地址，不会自动获得它内部所有节点的独立预算。</p><p>账号认证文件里的 <code>proxy_url</code> 独立代理优先于公共池。插件的凭据编辑弹窗目前还没有这个字段，需在 CPA 认证文件中配置。只想测试公共池轮询，就让账号独立代理留空。</p><p>独立代理未列入池时，按代理网关共享默认的 60 次、4 个在飞；想调整它的预算，可把相同代理地址添加到池中。该代理已在池里但被停用时，绑定它的账号不会自动改走其他出口。</p></details>
+      <details><summary>重启或多台 CPA 共用代理时要注意什么？</summary><p>代理配置会保存，重启后仍在；最近请求数和临时 IP 冷却保存在内存，重启后重新开始计算。保存配置时，同组已有的计数和冷却会保留。</p><p>多台 CPA 共用一个出口 IP 时，各台只统计自己的请求。请给各实例分配预算，别让每台都按整个 IP 的容量发送。代理池也不会增加账号套餐额度。</p></details>
+    </div>
+  </dialog>
   <dialog id="egressDialog" aria-labelledby="egressDialogTitle">
     <h2 id="egressDialogTitle">添加出口</h2>
     <form class="form-stack" id="egressForm">
