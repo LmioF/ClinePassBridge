@@ -258,6 +258,11 @@ func TestLocalBackoffHandleLocalTeamWithoutUpstream(t *testing.T) {
 			if finished.d != local429Delay {
 				t.Fatalf("delay = %v", finished.d)
 			}
+			select {
+			case <-host.clientClosed:
+				t.Fatal("local 429 was sent through host.stream.close before the backoff")
+			default:
+			}
 			s.rateLimits.mu.Lock()
 			for _, window := range s.rateLimits.windows {
 				if window.probe != nil {
@@ -273,6 +278,11 @@ func TestLocalBackoffHandleLocalTeamWithoutUpstream(t *testing.T) {
 			defer host.mu.Unlock()
 			if len(host.opened) != 0 || len(host.emitted) != 0 {
 				t.Fatal("local wait opened upstream or emitted streaming data")
+			}
+			select {
+			case <-host.clientClosed:
+				t.Fatal("local 429 bypassed the structured RPC error boundary")
+			default:
 			}
 		})
 	}
