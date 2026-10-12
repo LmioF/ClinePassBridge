@@ -18,6 +18,7 @@ import (
 var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+|sk[-_])[a-z0-9_.-]+`)
 
 type Service struct {
+	egress               *egressManager
 	configMu             sync.Mutex // Serializes configuration read-modify-save transactions.
 	rateLimits           rateLimiter
 	localBackoffClock    *backoffClock // Test clock; set before serving requests.
@@ -151,9 +152,13 @@ func (s *Service) configure(raw json.RawMessage) (err error) {
 		s.stopped, s.loaded, s.statisticsLoaded, s.usageSamplerStarted = false, false, false, false
 		s.stopCh = make(chan struct{})
 		s.logs = nil
+		s.egress = newEgressManager()
 	}
 	s.cfg = cfg
 	if !s.loaded {
+		if err := s.loadEgressLocked(); err != nil {
+			return err
+		}
 		s.loadEstimatesLocked()
 		if b, e := os.ReadFile(filepath.Join(cfg.DataDir, "requests.json")); e == nil {
 			_ = json.Unmarshal(b, &s.logs)
@@ -221,6 +226,7 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 			streams = append(streams, stream)
 		}
 		s.mu.Unlock()
+		s.getEgressManager().close()
 		for _, stream := range streams {
 			s.closeUpstream(stream)
 		}

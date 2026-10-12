@@ -11,6 +11,7 @@ import (
 )
 
 type upstreamStream struct {
+	local       *egressLocalStream
 	deadline    time.Time
 	diagnostics *modelTestDiagnostics
 	StatusCode  int         `json:"status_code"`
@@ -112,12 +113,17 @@ func (s *Service) request(r ExecutorRequest, c Credential, j map[string]any, str
 	} else {
 		delete(j, "stream_options")
 	}
-	return s.openUpstream(map[string]any{"host_callback_id": r.HostCallbackID, "method": "POST", "url": s.config().BaseURL + "/chat/completions", "headers": headers(c), "body": jsonBytes(j)}, r.deadline, diagnostics...)
+	payload := map[string]any{"host_callback_id": r.HostCallbackID, "method": "POST", "url": s.config().BaseURL + "/chat/completions", "headers": headers(c), "body": jsonBytes(j)}
+	management, _ := r.Metadata["egress_management"].(bool)
+	return s.openUpstream(s.egressCredentialPayload(payload, c, management), r.deadline, diagnostics...)
 }
 
 func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*modelTestDiagnostics) (upstreamStream, error) {
 	if deadline.IsZero() {
 		deadline = time.Now().Add(time.Duration(s.config().TimeoutSeconds) * time.Second)
+	}
+	if up, handled, err := s.openEgress(payload, deadline, diagnostics...); handled {
+		return up, err
 	}
 	type result struct {
 		up  upstreamStream
@@ -175,6 +181,9 @@ func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*
 	return out, nil
 }
 func (s *Service) closeUpstream(id string) {
+	if s.closeEgressStream(id) {
+		return
+	}
 	if id != "" {
 		_ = s.call("host.http.stream_close", map[string]any{"stream_id": id}, nil)
 		s.mu.Lock()
@@ -201,7 +210,12 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 	total := 0
 	for {
 		var chunk readChunk
-		e := s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID}, &chunk)
+		var e error
+		if up.local != nil {
+			chunk, e = up.local.read()
+		} else {
+			e = s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID}, &chunk)
+		}
 		mu.Lock()
 		timeout := timedOut
 		mu.Unlock()
@@ -210,6 +224,9 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 		}
 		if e != nil {
 			up.diagnostics.transportError(e.Error())
+			if up.local != nil {
+				return e
+			}
 			return fail(502, "upstream read failed: "+safeError(e))
 		}
 		if chunk.Error != "" {
@@ -239,7 +256,8 @@ func (s *Service) readJSON(up upstreamStream) ([]byte, error) {
 	}
 	if up.StatusCode < 200 || up.StatusCode >= 300 {
 		j, _ := decodeObject(b.Bytes())
-		return nil, classifyUpstreamError(up.StatusCode, up.Headers, j, time.Now())
+		err := classifyUpstreamError(up.StatusCode, up.Headers, j, time.Now())
+		return nil, s.classifyEgressError(up, j, b.Bytes(), err)
 	}
 	return b.Bytes(), nil
 }
@@ -363,7 +381,8 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 				return err
 			}
 			if j["error"] != nil || event == "error" || j["success"] == false {
-				return classifyUpstreamError(us.StatusCode, us.Headers, j, time.Now())
+				err := classifyUpstreamError(us.StatusCode, us.Headers, j, time.Now())
+				return s.classifyEgressError(us, j, payload, err)
 			}
 			observeMetadata(j, entry, attempt)
 			cp.observe(j)
