@@ -207,8 +207,11 @@ function pageAPI(options) {
     loadStatistics: () => { context.loads.push(context.api('/statistics')); },
     loadConfig: () => { context.loads.push(context.api('/config')); },
     loadLogs: () => { context.loads.push(context.api('/logs')); },
+    loadEgress: () => { context.loads.push(context.api('/egress')); },
     globalError: () => {}, toast: () => {},
   });
+  context.$('egressPanel').hidden = true;
+  context.$('logsPanel').hidden = false;
   const handlers = html.indexOf("    $('authButton').addEventListener('click'");
   vm.runInContext(html.slice(handlers, html.indexOf("    $('refreshModels').addEventListener", handlers)), context);
   return context;
@@ -436,8 +439,10 @@ test('a stale asynchronously restored panel login is validated once and stays pa
 });
 
 test('manual login releases data loads only after successful verification for both header types', async () => {
-  for (const type of ['bearer', 'x-management-key']) {
+  for (const type of ['bearer', 'x-management-key']) for (const view of ['logs', 'config', 'egress']) {
     const context = pageAPI(noLogin);
+    context.$('egressPanel').hidden = view !== 'egress';
+    context.$('logsPanel').hidden = view !== 'logs';
     const calls = [];
     let release;
     context.fetch = async (url, request) => {
@@ -454,7 +459,7 @@ test('manual login releases data loads only after successful verification for bo
     release();
     await pending;
     await Promise.all(context.loads);
-    assert.deepEqual(calls, ['/status', '/statistics', '/logs']);
+    assert.deepEqual(calls, ['/status', '/statistics', `/${view}`]);
     assert.equal(context.$('authDialog').open, false);
     assert.equal(context.$('authKey').value, '');
   }
