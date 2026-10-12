@@ -1,0 +1,2 @@
+# Unified diff context prefixes are intentional.
+*.patch text eol=lf -whitespace

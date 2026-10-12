@@ -1,0 +1,572 @@
+diff --git a/internal/pluginhost/host_callbacks.go b/internal/pluginhost/host_callbacks.go
+index 4af872a..dca9eb3 100644
+--- a/internal/pluginhost/host_callbacks.go
++++ b/internal/pluginhost/host_callbacks.go
+@@ -145,6 +145,10 @@ func (h *Host) callFromPlugin(ctx context.Context, method string, request []byte
+ 		return nil, fmt.Errorf("host plugin callback instance is closed")
+ 	}
+ 	switch method {
++	case "host.scheduling.capabilities":
++		return h.callHostSchedulingCapabilities()
++	case "host.request.context":
++		return h.callHostRequestContext(ctx, request)
+ 	case pluginabi.MethodHostModelExecute:
+ 		return h.callHostModelExecute(ctx, request)
+ 	case pluginabi.MethodHostModelExecuteStream:
+diff --git a/internal/pluginhost/host_request_context.go b/internal/pluginhost/host_request_context.go
+new file mode 100644
+index 0000000..a97d3dd
+--- /dev/null
++++ b/internal/pluginhost/host_request_context.go
+@@ -0,0 +1,61 @@
++package pluginhost
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++)
++
++// Optional scheduling callbacks; plugins on unmodified hosts fall back on an
++// unsupported-method error without changing schema_version or registration.
++func (h *Host) callHostSchedulingCapabilities() ([]byte, error) {
++	return json.Marshal(map[string]any{
++		"local_delay_supported":     true,
++		"request_context_supported": true,
++		"local_delay_ms":            5000,
++	})
++}
++
++func (h *Host) callHostRequestContext(caller context.Context, raw []byte) ([]byte, error) {
++	var req struct {
++		HostCallbackID string `json:"host_callback_id"`
++	}
++	if err := json.Unmarshal(raw, &req); err != nil {
++		return nil, err
++	}
++	callbackID := strings.TrimSpace(req.HostCallbackID)
++	if callbackID == "" {
++		return nil, fmt.Errorf("host callback ID is required")
++	}
++	parent, pluginID, instance, exists := h.lookupCallbackContext(callbackID)
++	response := struct {
++		Supported bool       `json:"supported"`
++		State     string     `json:"state"`
++		Deadline  *time.Time `json:"deadline,omitempty"`
++	}{Supported: true, State: "active"}
++	if !exists {
++		response.State = "closed"
++		return json.Marshal(response)
++	}
++	if callerID := hostCallbackPluginIDFromContext(caller); callerID != "" && callerID != pluginID {
++		return nil, fmt.Errorf("host callback ID does not belong to the calling plugin")
++	}
++	if callerInstance := hostCallbackInstanceFromContext(caller); callerInstance != instance && (callerInstance != nil || instance != nil) {
++		return nil, fmt.Errorf("host callback ID does not belong to the calling plugin instance")
++	}
++	if deadline, ok := parent.Deadline(); ok {
++		response.Deadline = &deadline
++	}
++	switch {
++	case errors.Is(parent.Err(), context.DeadlineExceeded):
++		response.State = "deadline_exceeded"
++	case parent.Err() != nil:
++		response.State = "canceled"
++	case instance != nil && instance.closed.Load():
++		response.State = "closed"
++	}
++	return json.Marshal(response)
++}
+diff --git a/internal/pluginhost/host_request_context_test.go b/internal/pluginhost/host_request_context_test.go
+new file mode 100644
+index 0000000..f644ea3
+--- /dev/null
++++ b/internal/pluginhost/host_request_context_test.go
+@@ -0,0 +1,90 @@
++package pluginhost
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++	"time"
++)
++
++func TestHostSchedulingCapabilities(t *testing.T) {
++	host := New()
++	raw, err := host.callFromPlugin(context.Background(), "host.scheduling.capabilities", []byte(`{}`))
++	if err != nil {
++		t.Fatal(err)
++	}
++	var caps struct {
++		LocalDelay bool `json:"local_delay_supported"`
++		Context    bool `json:"request_context_supported"`
++		DelayMS    int  `json:"local_delay_ms"`
++	}
++	if err = json.Unmarshal(raw, &caps); err != nil {
++		t.Fatal(err)
++	}
++	if !caps.LocalDelay || !caps.Context || caps.DelayMS != 5000 {
++		t.Fatalf("caps=%+v", caps)
++	}
++}
++
++func TestHostRequestContextStatesAndOwnership(t *testing.T) {
++	for _, state := range []string{"active", "canceled", "deadline_exceeded", "closed"} {
++		t.Run(state, func(t *testing.T) {
++			host := New()
++			parent, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			if state == "deadline_exceeded" {
++				var stop context.CancelFunc
++				parent, stop = context.WithDeadline(parent, time.Now().Add(-time.Second))
++				defer stop()
++			}
++			instance := &hostCallbackInstance{}
++			callbackID, closeCallback := host.openCallbackContextForPluginInstance(parent, "cline-plugin", instance)
++			defer closeCallback()
++			if state == "canceled" {
++				cancel()
++			}
++			if state == "closed" {
++				closeCallback()
++			}
++			request, _ := json.Marshal(map[string]string{"host_callback_id": callbackID})
++			caller := withHostCallbackIdentity(context.Background(), "cline-plugin", instance)
++			raw, err := host.callFromPlugin(caller, "host.request.context", request)
++			if err != nil {
++				t.Fatal(err)
++			}
++			var got struct {
++				Supported bool       `json:"supported"`
++				State     string     `json:"state"`
++				Deadline  *time.Time `json:"deadline"`
++			}
++			if err = json.Unmarshal(raw, &got); err != nil {
++				t.Fatal(err)
++			}
++			if !got.Supported || got.State != state {
++				t.Fatalf("state=%+v want=%s", got, state)
++			}
++			if state == "deadline_exceeded" && got.Deadline == nil {
++				t.Fatal("host deadline missing")
++			}
++			if state != "closed" {
++				foreign := withHostCallbackIdentity(context.Background(), "other-plugin", instance)
++				if _, err = host.callFromPlugin(foreign, "host.request.context", request); err == nil {
++					t.Fatal("foreign plugin context accepted")
++				}
++				stale := withHostCallbackIdentity(context.Background(), "cline-plugin", &hostCallbackInstance{})
++				if _, err = host.callFromPlugin(stale, "host.request.context", request); err == nil {
++					t.Fatal("foreign plugin instance accepted")
++				}
++			}
++			host.httpOperations.mu.Lock()
++			operations := len(host.httpOperations.operations)
++			host.httpOperations.mu.Unlock()
++			host.httpStreams.mu.Lock()
++			streams := len(host.httpStreams.streams)
++			host.httpStreams.mu.Unlock()
++			if operations != 0 || streams != 0 {
++				t.Fatal("context observer allocated upstream resources")
++			}
++		})
++	}
++}
+diff --git a/sdk/cliproxy/auth/cline_local_delay.go b/sdk/cliproxy/auth/cline_local_delay.go
+new file mode 100644
+index 0000000..f8fefa5
+--- /dev/null
++++ b/sdk/cliproxy/auth/cline_local_delay.go
+@@ -0,0 +1,72 @@
++package auth
++
++import (
++	"context"
++	"errors"
++	"time"
++)
++
++const clineLocalSelectionDelay = 5 * time.Second
++
++type clineDelayClockKey struct{}
++type clineDelayClock func(time.Duration) (<-chan time.Time, func())
++
++// Inspect concrete selection errors before removing the execution-attempt
++// marker. Historical causes attached to cooldown errors are not new attempts.
++func isClineLocalSelectionError(providers []string, err error) bool {
++	if len(providers) != 1 || providers[0] != "cline-pass" || err == nil || hasUpstreamExecutionAttempt(err) {
++		return false
++	}
++	var status interface{ StatusCode() int }
++	if !errors.As(err, &status) || status.StatusCode() != 429 {
++		return false
++	}
++	if isRequestStopError(err) || isRequestTerminatedError(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
++		return false
++	}
++	switch e := err.(type) {
++	case *modelCooldownError:
++		return e.provider == "" || e.provider == "cline-pass"
++	case *authUnavailableError:
++		return true
++	case *Error:
++		return e.Code == "auth_not_found" || e.Code == "auth_unavailable"
++	case *errorWithCause:
++		return e.base != nil && (e.base.Code == "auth_not_found" || e.base.Code == "auth_unavailable")
++	default:
++		return false
++	}
++}
++
++// The final execution boundary runs this once, after all selection/execution
++// leases have been released and before handlers receive headers or SSE chunks.
++// It adds no retry and preserves the original error and Retry-After header.
++func finishClineLocalSelection(ctx context.Context, providers []string, err error) error {
++	if !isClineLocalSelectionError(providers, err) {
++		return unwrapExecutionBoundaryError(err)
++	}
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	if ctx.Err() != nil {
++		return ctx.Err()
++	}
++	newTimer := clineDelayClock(func(d time.Duration) (<-chan time.Time, func()) {
++		t := time.NewTimer(d)
++		return t.C, func() { t.Stop() }
++	})
++	if injected, ok := ctx.Value(clineDelayClockKey{}).(clineDelayClock); ok {
++		newTimer = injected
++	}
++	done, stop := newTimer(clineLocalSelectionDelay)
++	defer stop()
++	select {
++	case <-ctx.Done():
++		return ctx.Err()
++	case <-done:
++		if ctx.Err() != nil {
++			return ctx.Err()
++		}
++		return unwrapExecutionBoundaryError(err)
++	}
++}
+diff --git a/sdk/cliproxy/auth/cline_local_delay_test.go b/sdk/cliproxy/auth/cline_local_delay_test.go
+new file mode 100644
+index 0000000..953c202
+--- /dev/null
++++ b/sdk/cliproxy/auth/cline_local_delay_test.go
+@@ -0,0 +1,240 @@
++package auth
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++)
++
++type clineTestTimer struct {
++	duration time.Duration
++	done     chan time.Time
++	stopped  atomic.Bool
++}
++
++func clineTestClockContext(parent context.Context) (context.Context, <-chan *clineTestTimer) {
++	created := make(chan *clineTestTimer, 8)
++	clock := clineDelayClock(func(d time.Duration) (<-chan time.Time, func()) {
++		timer := &clineTestTimer{duration: d, done: make(chan time.Time, 1)}
++		created <- timer
++		return timer.done, func() { timer.stopped.Store(true) }
++	})
++	return context.WithValue(parent, clineDelayClockKey{}, clock), created
++}
++
++func clineAwaitTimer(t *testing.T, created <-chan *clineTestTimer) *clineTestTimer {
++	t.Helper()
++	select {
++	case timer := <-created:
++		return timer
++	case <-time.After(time.Second):
++		t.Fatal("local delay did not start")
++		return nil
++	}
++}
++
++func clineAwaitError(t *testing.T, done <-chan error) error {
++	t.Helper()
++	select {
++	case err := <-done:
++		return err
++	case <-time.After(time.Second):
++		t.Fatal("local delay did not finish")
++		return nil
++	}
++}
++
++func TestClineLocalDelayScope(t *testing.T) {
++	cooldown := NewModelCooldownError("model", "cline-pass", time.Minute)
++	for _, tc := range []struct {
++		name      string
++		providers []string
++		err       error
++		delay     bool
++	}{
++		{"cooldown", []string{"cline-pass"}, cooldown, true},
++		{"unavailable429", []string{"cline-pass"}, &Error{Code: "auth_unavailable", HTTPStatus: 429}, true},
++		{"notfound429", []string{"cline-pass"}, &Error{Code: "auth_not_found", HTTPStatus: 429}, true},
++		{"unavailable503", []string{"cline-pass"}, newAuthUnavailableError(time.Now().Add(time.Minute), time.Now()), false},
++		{"notfoundDefault", []string{"cline-pass"}, &Error{Code: "auth_not_found"}, false},
++		{"otherProvider", []string{"codex"}, cooldown, false},
++		{"mixedProviders", []string{"cline-pass", "codex"}, cooldown, false},
++		{"otherCooldown", []string{"cline-pass"}, NewModelCooldownError("model", "codex", time.Minute), false},
++		{"realUpstream429", []string{"cline-pass"}, markUpstreamExecutionAttempt(&Error{Code: "auth_not_found", HTTPStatus: 429}), false},
++		{"realUpstreamCooldown", []string{"cline-pass"}, markUpstreamExecutionAttempt(cooldown), false},
++		{"ordinary429", []string{"cline-pass"}, &Error{Code: "rate_limit_exceeded", HTTPStatus: 429}, false},
++		{"nil", []string{"cline-pass"}, nil, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := isClineLocalSelectionError(tc.providers, tc.err); got != tc.delay {
++				t.Fatalf("scope = %t want %t", got, tc.delay)
++			}
++			if !tc.delay {
++				ctx, timers := clineTestClockContext(context.Background())
++				finishClineLocalSelection(ctx, tc.providers, tc.err)
++				select {
++				case <-timers:
++					t.Fatal("out-of-scope error waited")
++				default:
++				}
++			}
++		})
++	}
++}
++
++func TestClineLocalDelayPreservesRetryAfterAndCancels(t *testing.T) {
++	for _, mode := range []string{"elapsed", "cancel", "deadline"} {
++		t.Run(mode, func(t *testing.T) {
++			parent, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			if mode == "deadline" {
++				var deadlineCancel context.CancelFunc
++				parent, deadlineCancel = context.WithDeadline(parent, time.Now().Add(-time.Second))
++				defer deadlineCancel()
++			}
++			ctx, timers := clineTestClockContext(parent)
++			err := NewModelCooldownError("model", "cline-pass", 47*time.Second)
++			before := err.(interface{ Headers() http.Header }).Headers().Get("Retry-After")
++			done := make(chan error, 1)
++			go func() { done <- finishClineLocalSelection(ctx, []string{"cline-pass"}, err) }()
++			if mode == "deadline" {
++				if !errors.Is(clineAwaitError(t, done), context.DeadlineExceeded) {
++					t.Fatal("deadline was ignored")
++				}
++				select {
++				case <-timers:
++					t.Fatal("expired request waited")
++				default:
++				}
++				return
++			}
++			timer := clineAwaitTimer(t, timers)
++			if timer.duration != 5*time.Second {
++				t.Fatalf("duration=%v", timer.duration)
++			}
++			select {
++			case <-done:
++				t.Fatal("error returned before timer")
++			default:
++			}
++			if mode == "cancel" {
++				cancel()
++			} else {
++				timer.done <- time.Now()
++			}
++			got := clineAwaitError(t, done)
++			if mode == "cancel" {
++				if !errors.Is(got, context.Canceled) {
++					t.Fatalf("got %v", got)
++				}
++			} else {
++				if got != err || got.(interface{ Headers() http.Header }).Headers().Get("Retry-After") != before {
++					t.Fatal("original error/retry header changed")
++				}
++			}
++			if !timer.stopped.Load() {
++				t.Fatal("timer leaked")
++			}
++		})
++	}
++}
++
++type clineCoolingSelector struct{ err error }
++
++func (s clineCoolingSelector) Pick(_ context.Context, _, _ string, _ cliproxyexecutor.Options, _ []*Auth) (*Auth, error) {
++	return nil, s.err
++}
++
++func TestClineLocalDelayManagerFinalBoundary(t *testing.T) {
++	paths := []struct {
++		name   string
++		invoke func(context.Context, *Manager, string) error
++	}{
++		{"nonstream", func(ctx context.Context, m *Manager, model string) error {
++			_, err := m.Execute(ctx, []string{"cline-pass"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
++			return err
++		}},
++		{"stream", func(ctx context.Context, m *Manager, model string) error {
++			stream, err := m.ExecuteStream(ctx, []string{"cline-pass"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{Stream: true})
++			if stream != nil {
++				t.Error("selection error returned stream/header before backoff")
++			}
++			return err
++		}},
++		{"count", func(ctx context.Context, m *Manager, model string) error {
++			_, err := m.ExecuteCount(ctx, []string{"cline-pass"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
++			return err
++		}},
++	}
++	for _, path := range paths {
++		t.Run(path.name, func(t *testing.T) {
++			model := "cline-delay-" + path.name
++			cooldown := NewModelCooldownError(model, "cline-pass", time.Minute)
++			manager := NewManager(nil, clineCoolingSelector{cooldown}, nil)
++			manager.SetRetryConfig(0, 0, 0)
++			executor := &retryTerminalPriorityExecutor{identifier: "cline-pass"}
++			manager.RegisterExecutor(executor)
++			authID := "cline-delay-" + path.name
++			if _, err := manager.Register(context.Background(), &Auth{ID: authID, Provider: "cline-pass", Status: StatusActive}); err != nil {
++				t.Fatal(err)
++			}
++			registry.GetGlobalRegistry().RegisterClient(authID, "cline-pass", []*registry.ModelInfo{{ID: model}})
++			defer registry.GetGlobalRegistry().UnregisterClient(authID)
++			ctx, timers := clineTestClockContext(context.Background())
++			done := make(chan error, 1)
++			go func() { done <- path.invoke(ctx, manager, model) }()
++			timer := clineAwaitTimer(t, timers)
++			if executor.calls.Load() != 0 {
++				t.Fatal("local backoff invoked upstream")
++			}
++			select {
++			case <-done:
++				t.Fatal("returned before local wait")
++			default:
++			}
++			if _, err := manager.Register(context.Background(), &Auth{ID: authID + "-other", Provider: "cline-pass", Status: StatusActive}); err != nil {
++				t.Fatal("manager lock held during wait")
++			}
++			timer.done <- time.Now()
++			if got := clineAwaitError(t, done); got != cooldown {
++				t.Fatalf("got %v", got)
++			}
++			select {
++			case <-timers:
++				t.Fatal("local delay repeated")
++			default:
++			}
++		})
++	}
++}
++
++func TestClineLocalDelayManagerRealUpstreamDoesNotWait(t *testing.T) {
++	manager := NewManager(nil, &FillFirstSelector{}, nil)
++	manager.SetRetryConfig(0, 0, 0)
++	err429 := &Error{Code: "auth_not_found", HTTPStatus: 429, Message: "real upstream 429"}
++	executor := &retryTerminalPriorityExecutor{identifier: "cline-pass", upstreamErr: err429, terminalErr: err429}
++	manager.RegisterExecutor(executor)
++	const authID = "cline-real429-delay"
++	const model = "cline-real429-delay-model"
++	if _, err := manager.Register(context.Background(), &Auth{ID: authID, Provider: "cline-pass", Status: StatusActive}); err != nil {
++		t.Fatal(err)
++	}
++	registry.GetGlobalRegistry().RegisterClient(authID, "cline-pass", []*registry.ModelInfo{{ID: model}})
++	defer registry.GetGlobalRegistry().UnregisterClient(authID)
++	ctx, timers := clineTestClockContext(context.Background())
++	_, err := manager.Execute(ctx, []string{"cline-pass"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
++	if !errors.Is(err, err429) || executor.calls.Load() != 1 {
++		t.Fatalf("err=%v calls=%d", err, executor.calls.Load())
++	}
++	select {
++	case <-timers:
++		t.Fatal("real upstream 429 delayed")
++	default:
++	}
++}
+diff --git a/sdk/cliproxy/auth/conductor_execution.go b/sdk/cliproxy/auth/conductor_execution.go
+index 9616a82..5892451 100644
+--- a/sdk/cliproxy/auth/conductor_execution.go
++++ b/sdk/cliproxy/auth/conductor_execution.go
+@@ -128,7 +128,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
+ 	}
+ 	if m.HomeEnabled() {
+ 		resp, errHome := m.executeHome(ctx, normalized, req, opts, false)
+-		return resp, unwrapExecutionBoundaryError(errHome)
++		return resp, finishClineLocalSelection(ctx, normalized, errHome)
+ 	}
+ 
+ 	defaultRequestRetry, maxRetryCredentials, maxWait := m.retrySettings()
+@@ -165,7 +165,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
+ 			}
+ 		}
+ 		lastErr = preferredExecutionAttemptError(lastErr, preferredUpstreamErr)
+-		lastErr = unwrapExecutionBoundaryError(lastErr)
++		lastErr = finishClineLocalSelection(ctx, normalized, lastErr)
+ 		if hasAntigravityProvider(normalized) && shouldAttemptAntigravityCreditsFallback(m, lastErr, normalized) {
+ 			if resp, ok, errCredits := m.tryAntigravityCreditsExecute(ctx, req, opts); errCredits != nil {
+ 				return cliproxyexecutor.Response{}, errCredits
+@@ -175,7 +175,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
+ 		}
+ 		return cliproxyexecutor.Response{}, lastErr
+ 	}
+-	return cliproxyexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no auth available"}
++	return cliproxyexecutor.Response{}, finishClineLocalSelection(ctx, normalized, &Error{Code: "auth_not_found", Message: "no auth available"})
+ }
+ 
+ // It supports multiple providers for the same model and round-robins the starting provider per model.
+@@ -188,7 +188,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
+ 	}
+ 	if m.HomeEnabled() {
+ 		resp, errHome := m.executeHome(ctx, normalized, req, opts, true)
+-		return resp, unwrapExecutionBoundaryError(errHome)
++		return resp, finishClineLocalSelection(ctx, normalized, errHome)
+ 	}
+ 
+ 	defaultRequestRetry, maxRetryCredentials, maxWait := m.retrySettings()
+@@ -225,9 +225,9 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
+ 			}
+ 		}
+ 		lastErr = preferredExecutionAttemptError(lastErr, preferredUpstreamErr)
+-		return cliproxyexecutor.Response{}, unwrapExecutionBoundaryError(lastErr)
++		return cliproxyexecutor.Response{}, finishClineLocalSelection(ctx, normalized, lastErr)
+ 	}
+-	return cliproxyexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no auth available"}
++	return cliproxyexecutor.Response{}, finishClineLocalSelection(ctx, normalized, &Error{Code: "auth_not_found", Message: "no auth available"})
+ }
+ 
+ // ExecuteStream performs a streaming execution using the configured selector and executor.
+@@ -302,7 +302,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
+ 		if preferredUpstreamErr != nil && (!m.HomeEnabled() || isHomeRetryRoundExhausted(lastErr)) {
+ 			lastErr = preferredExecutionAttemptError(lastErr, preferredUpstreamErr)
+ 		}
+-		lastErr = unwrapExecutionBoundaryError(lastErr)
++		lastErr = finishClineLocalSelection(ctx, normalized, lastErr)
+ 		if hasAntigravityProvider(normalized) && shouldAttemptAntigravityCreditsFallback(m, lastErr, normalized) {
+ 			if result, ok, errCredits := m.tryAntigravityCreditsExecuteStream(ctx, req, opts); errCredits != nil {
+ 				return nil, errCredits
+@@ -316,7 +316,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
+ 		}
+ 		return nil, lastErr
+ 	}
+-	return nil, &Error{Code: "auth_not_found", Message: "no auth available"}
++	return nil, finishClineLocalSelection(ctx, normalized, &Error{Code: "auth_not_found", Message: "no auth available"})
+ }
+ 
+ type requestToFormatResolver interface {
