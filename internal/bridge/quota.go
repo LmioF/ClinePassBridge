@@ -116,6 +116,8 @@ func (s *Service) quotaPersistenceError(next Credential, err error) {
 // never the effective runtime flag. Let the watcher reparse the physical file:
 // host.auth.save would also create a generic registration for rotated auths.
 func (s *Service) persistQuotaCredential(next Credential) (err error) {
+	s.authFileMu.Lock()
+	defer s.authFileMu.Unlock()
 	s.mu.Lock()
 	current, exists := s.creds[next.ID]
 	if !exists || current.APIKey != next.APIKey {

@@ -408,7 +408,7 @@
       </div>
       <div class="panel">
         <div class="panel-head"><h2>代理出口池</h2><button class="button compact primary" id="openEgress" type="button">添加出口</button></div>
-        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后只使用池内可用出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后产生本地429，再按本地退避规则延迟返回。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
+        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后产生本地429，再按本地退避规则延迟返回。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
         <div id="egressList"><div class="empty">正在读取出口…</div></div>
         <p class="inline-state" id="egressState" role="status"></p>
       </div>
@@ -542,7 +542,7 @@
       <div class="field"><label for="egressLabel">名称</label><input class="control" id="egressLabel" maxlength="100" required></div>
       <div class="field"><label for="egressURL" title="支持 HTTP、HTTPS、SOCKS5、SOCKS5H 代理，包括 Resin；输入 direct 使用直连。认证信息仅在保存时提交。">代理地址</label><input class="control" id="egressURL" type="password" autocomplete="new-password" spellcheck="false" required></div>
       <div class="field"><label for="egressGroup" title="同一公网 IP 的多个代理地址填相同分组，共享预算；留空自动创建独立分组。">出口分组</label><input class="control" id="egressGroup" maxlength="100" placeholder="例如：出口IP或节点组"></div>
-      <div class="field-line"><div class="field"><label for="egressRPM">每 60 秒请求数</label><input class="control" id="egressRPM" type="number" min="1" max="100000" value="60" required></div><div class="field"><label for="egressInflight">最大在飞请求</label><input class="control" id="egressInflight" type="number" min="1" max="1024" value="16" required></div></div>
+      <div class="field-line"><div class="field"><label for="egressRPM">每 60 秒请求数</label><input class="control" id="egressRPM" type="number" min="1" max="100000" value="60" required></div><div class="field"><label for="egressInflight">最大在飞请求</label><input class="control" id="egressInflight" type="number" min="1" max="1024" value="4" required></div></div>
       <label class="schedule-tools"><input type="checkbox" id="egressEndpointEnabled" checked>启用此出口</label>
       <p class="inline-state" id="egressDialogState" role="status"></p>
       <div class="form-foot"><button class="button" type="button" id="cancelEgress">取消</button><button class="button primary" type="submit" id="submitEgress">保存出口</button></div>

@@ -95,8 +95,9 @@ func (s *Service) schedulingSetCredential(r ManagementRequest) (any, error) {
 	if !exists {
 		return managementJSON(404, map[string]any{"error": "账号不存在"})
 	}
+	baseline := c
 	c.Disabled = !*in.Enabled
-	if err := s.saveCredential(c); err != nil {
+	if err := s.saveCredential(c, baseline); err != nil {
 		return managementJSON(409, map[string]any{"error": safeError(err)})
 	}
 	s.wakeUsageSampler()

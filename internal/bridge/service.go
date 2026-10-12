@@ -18,6 +18,7 @@ import (
 var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+|sk[-_])[a-z0-9_.-]+`)
 
 type Service struct {
+	authFileMu           sync.Mutex // Never held across host callbacks or watcher waits.
 	egress               *egressManager
 	configMu             sync.Mutex // Serializes configuration read-modify-save transactions.
 	rateLimits           rateLimiter
@@ -265,10 +266,11 @@ func (s *Service) refreshRegistrations() error {
 	}
 	s.mu.RUnlock()
 	for _, c := range credentials {
+		baseline := c
 		// CPA skips unchanged files. A model revision makes watcher refreshes reliable.
 		c.ModelRevision = hex.EncodeToString(revision[:])
 		c.RequestScopedErrors = requestErrorRules()
-		if e := s.saveCredential(c); e != nil {
+		if e := s.saveCredential(c, baseline); e != nil {
 			return e
 		}
 	}
@@ -305,6 +307,8 @@ func authData(c Credential, filename string, autoPause ...bool) any {
 	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled || enabled && c.QuotaBlock != nil, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
 }
 func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
+	s.authFileMu.Lock()
+	defer s.authFileMu.Unlock()
 	var r struct {
 		Provider, Path, FileName string
 		RawJSON                  []byte
@@ -312,6 +316,19 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	}
 	if e := json.Unmarshal(raw, &r); e != nil {
 		return nil, e
+	}
+	// Watcher work can arrive after a newer edit. Resolve the physical snapshot
+	// again while serialized with plugin file writes, before accepting any fields.
+	dir := r.Host.AuthDir
+	if dir == "" {
+		s.mu.RLock()
+		dir = s.authDir
+		s.mu.RUnlock()
+	}
+	if dir != "" && r.FileName != "" && filepath.Base(r.FileName) == r.FileName && !strings.ContainsAny(r.FileName, `/\`) {
+		if latest, err := os.ReadFile(filepath.Join(dir, r.FileName)); err == nil {
+			r.RawJSON = latest
+		}
 	}
 	var c Credential
 	if e := json.Unmarshal(r.RawJSON, &c); e != nil || c.Type != Provider {

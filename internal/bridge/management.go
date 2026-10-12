@@ -336,6 +336,7 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 	if !ok {
 		return managementJSON(404, map[string]any{"error": "credential not found"})
 	}
+	baseline := c
 	if in.Label != nil {
 		c.Label = strings.TrimSpace(*in.Label)
 		if len(c.Label) > 100 {
@@ -362,7 +363,7 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
 	}
 	c.RequestScopedErrors = requestErrorRules()
-	if e := s.saveCredential(c); e != nil {
+	if e := s.saveCredential(c, baseline); e != nil {
 		return managementJSON(500, map[string]any{"error": "credential persistence failed"})
 	}
 	return managementJSON(200, map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled, "priority": c.Priority})

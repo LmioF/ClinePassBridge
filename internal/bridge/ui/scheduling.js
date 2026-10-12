@@ -14,7 +14,7 @@ function renderScheduling(data) {
   $('scheduleHostStatus').title = data.host?.message || 'CPA 选号前的拒绝不计入插件请求日志。';
   const delay = data.host?.local_delay_supported;
   $('scheduleDelayStatus').textContent = delay ? '本地 429 · 5 秒延迟' : '插件本地 429 · 5 秒延迟';
-  $('scheduleDelayStatus').title = delay ? '已支持 CPA 选号前拒绝与插件本地退避；客户端断开可提前结束。' : 'CPA 选号前的拒绝需要配套宿主支持；插件常规功能不依赖此扩展。';
+  $('scheduleDelayStatus').title = (delay ? '已支持 CPA 选号前拒绝与插件本地退避。' : 'CPA 选号前的拒绝需要配套宿主支持；插件常规功能不依赖此扩展。') + (data.host?.request_cancel_observable ? '已支持客户端取消观察。' : '当前宿主按插件超时或停止信号结束等待。');
   $('scheduleAccounts').innerHTML = (data.accounts || []).map((account) => {
     let badge = schedulingBadge('可用', 'good');
     if (account.enabled === false) badge = schedulingBadge('手动停用');

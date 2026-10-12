@@ -198,7 +198,7 @@ func TestQuotaToggleAndKeyRotation(t *testing.T) {
 	}
 	next := s.creds[c.ID]
 	next.APIKey = "fixture-replaced"
-	if err := s.saveCredential(next); err != nil {
+	if err := s.saveCredential(next, s.creds[c.ID]); err != nil {
 		t.Fatal(err)
 	}
 	if s.creds[c.ID].QuotaBlock != nil || s.creds[c.ID].QuotaIdentity != nil {
@@ -231,5 +231,39 @@ func TestQuotaUsage100StopsCPAAndRemainsSamplingTarget(t *testing.T) {
 	targets := s.usageSamplingTargets(time.Now().Add(2 * usageTTL))
 	if len(targets) != 1 || targets[0] != "one" || s.creds["one"].Disabled {
 		t.Fatal("auto-pause stopped future usage sampling or changed manual Disabled")
+	}
+}
+
+func TestQuotaWatcherStaleSnapshotPreservesManualEdits(t *testing.T) {
+	for _, change := range []string{"disable", "rotate-key"} {
+		t.Run(change, func(t *testing.T) {
+			s := NewService()
+			old := quotaTestAuth(t, s, Credential{ID: "one", APIKey: "fixture-before"})
+			baseline := s.creds["one"]
+			updated := baseline
+			if change == "disable" {
+				updated.Disabled = true
+			} else {
+				updated.APIKey = "fixture-after"
+			}
+			if err := s.saveCredential(updated, baseline); err != nil {
+				t.Fatal(err)
+			}
+			expected := quotaTestRead(t, s, "one")
+			// Reproduce an already-queued watcher event carrying the old bytes.
+			quotaTestParse(t, s, "one", old)
+			current := s.creds["one"]
+			if current.APIKey != updated.APIKey || current.Disabled != updated.Disabled {
+				t.Fatal("late watcher restored old manual fields")
+			}
+			staleEdit := baseline
+			staleEdit.Label = "stale-label"
+			if err := s.saveCredential(staleEdit, baseline); statusOf(err) != 409 {
+				t.Fatalf("stale edit was accepted: %v", err)
+			}
+			if !bytes.Equal(expected, quotaTestRead(t, s, "one")) {
+				t.Fatal("stale edit overwrote the physical credential")
+			}
+		})
 	}
 }

@@ -80,10 +80,13 @@ func (s *Service) affinityFile(c Credential) (affinityFile, error) {
 // Rotated credentials must only go through the watcher. host.auth.save also
 // upserts a generic filename-based ID and would resurrect an obsolete auth.
 // Both paths merge into the original file so plugin-unknown fields survive.
-func (s *Service) saveCredential(c Credential) error {
+func (s *Service) saveCredential(c, baseline Credential) error {
 	s.mu.RLock()
 	current, filename, dir := s.creds[c.ID], s.authFiles[c.ID], s.authDir
 	s.mu.RUnlock()
+	if !bytes.Equal(jsonBytes(current), jsonBytes(baseline)) {
+		return fail(409, "credential changed before save; refresh and retry")
+	}
 	c.RequestScopedErrors = requestErrorRules()
 	c = normalizeQuotaCredential(c)
 	if current.APIKey != c.APIKey {
@@ -91,6 +94,14 @@ func (s *Service) saveCredential(c Credential) error {
 	}
 	body := json.RawMessage(jsonBytes(c))
 	if current.RoutingID != "" || (dir != "" && filename != "") {
+		s.authFileMu.Lock()
+		defer s.authFileMu.Unlock()
+		s.mu.RLock()
+		unchanged := bytes.Equal(jsonBytes(s.creds[c.ID]), jsonBytes(baseline))
+		s.mu.RUnlock()
+		if !unchanged {
+			return fail(409, "credential changed before save; refresh and retry")
+		}
 		file, err := s.affinityFile(current)
 		if err != nil {
 			return err
@@ -104,6 +115,10 @@ func (s *Service) saveCredential(c Credential) error {
 			file.updated[key] = value
 		}
 		body = json.RawMessage(jsonBytes(file.updated))
+		latest, err := os.ReadFile(file.path)
+		if err != nil || !bytes.Equal(latest, file.original) {
+			return fail(409, "credential file changed before save; refresh and retry")
+		}
 		if err := atomicJSON(file.path, file.updated); err != nil {
 			return err
 		}
@@ -242,6 +257,8 @@ func (s *Service) clearAffinity(r ManagementRequest) (any, error) {
 	}
 	written := make([][]byte, len(files))
 	rollback := func(cause error) (any, error) {
+		s.authFileMu.Lock()
+		defer s.authFileMu.Unlock()
 		restored := true
 		for i, expected := range written {
 			if expected == nil {
@@ -267,6 +284,8 @@ func (s *Service) clearAffinity(r ManagementRequest) (any, error) {
 		return managementJSON(500, map[string]any{"error": message})
 	}
 	writePhase := func(targets []Credential) error {
+		s.authFileMu.Lock()
+		defer s.authFileMu.Unlock()
 		for i, file := range files {
 			expected := []byte(file.original)
 			if written[i] != nil {
