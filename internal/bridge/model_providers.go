@@ -131,14 +131,14 @@ func (s *Service) probeCredential(id string) (Credential, error) {
 		if !ok {
 			return c, fail(404, "credential not found")
 		}
-		if c.APIKey == "" || c.Disabled || (quotaAutoPauseEnabled(s.cfg) && normalizeQuotaCredential(c).QuotaBlock != nil) {
+		if c.APIKey == "" || c.Disabled || normalizeQuotaCredential(c).QuotaBlock != nil {
 			return c, fail(400, "该凭据已停用、额度暂停或缺少 API key")
 		}
 		return c, nil
 	}
 	candidates := make([]Credential, 0, len(s.creds))
 	for _, c := range s.creds {
-		if c.APIKey != "" && !c.Disabled && !(quotaAutoPauseEnabled(s.cfg) && normalizeQuotaCredential(c).QuotaBlock != nil) {
+		if c.APIKey != "" && !c.Disabled && normalizeQuotaCredential(c).QuotaBlock == nil {
 			candidates = append(candidates, c)
 		}
 	}

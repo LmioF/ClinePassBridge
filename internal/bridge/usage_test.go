@@ -111,8 +111,8 @@ func TestCredentialUsageCacheErrorsAndKeyReplacement(t *testing.T) {
 	c.Disabled = true
 	s.creds["one"] = c
 	disabled, _ := s.credentialUsage(req)
-	if disabled.Status != "disabled" || calls != 5 {
-		t.Fatal("disabled credential queried")
+	if disabled.Status != "ok" || calls != 5 || !disabled.UpdatedAt.Equal(*replaced.UpdatedAt) || !s.creds["one"].Disabled {
+		t.Fatal("manual disable discarded usage or changed the manual flag")
 	}
 	c.Disabled = false
 	c.ProxyURL = "http://fixture-user:fixture-password@127.0.0.1:1"
@@ -120,6 +120,54 @@ func TestCredentialUsageCacheErrorsAndKeyReplacement(t *testing.T) {
 	proxy, _ := s.credentialUsage(req)
 	if proxy.Status != "unavailable" || calls != 5 {
 		t.Fatal("credential proxy silently bypassed")
+	}
+}
+
+func TestCredentialUsageDisabledQuotaRecoveryPreservesManualState(t *testing.T) {
+	percent, calls := 100, 0
+	s := usageTestService(t, func(req map[string]any) (int, string) {
+		calls++
+		if strings.HasSuffix(str(req["url"]), "/usage-limits") {
+			return 200, fmt.Sprintf(`{"success":true,"data":{"limits":[{"type":"weekly","percentUsed":%d}]}}`, percent)
+		}
+		return 200, testPlan
+	})
+	c := s.creds["one"]
+	c.Disabled = true
+	quotaTestAuth(t, s, c)
+	query := func() credentialUsage {
+		t.Helper()
+		raw, err := s.management(jsonBytes(usageTestRequest()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := raw.(ManagementResponse)
+		var value credentialUsage
+		if response.StatusCode != 200 || json.Unmarshal(response.Body, &value) != nil || value.Status != "ok" {
+			t.Fatalf("manual-disabled account usage query failed: %s", response.Body)
+		}
+		return value
+	}
+	first := query()
+	if calls != 2 || *first.Limits[0].PercentUsed != 100 || s.creds[c.ID].QuotaBlock == nil || !s.creds[c.ID].Disabled {
+		t.Fatal("disabled account did not fetch current usage and persist quota protection")
+	}
+	percent = 3
+	past := time.Now().Add(-2 * usageTTL)
+	s.usageCache[c.ID].value.CheckedAt = &past
+	recovered := query()
+	if calls != 3 || *recovered.Limits[0].PercentUsed != 3 || s.creds[c.ID].QuotaBlock != nil || !s.creds[c.ID].Disabled {
+		t.Fatal("fresh usage recovery changed manual disable or left stale quota state")
+	}
+	status := s.quotaStatus(c.ID)
+	if status["manual_disabled"] != true || status["quota_paused"] != false || status["effective_disabled"] != true {
+		t.Fatal("recovered account lost its independent manual disable")
+	}
+	if quotaTestParse(t, NewService(), c.ID, quotaTestRead(t, s, c.ID))["Disabled"] != true {
+		t.Fatal("quota recovery enabled the physical credential or reloaded CPA auth")
+	}
+	if _, err := s.selectedCredential(ExecutorRequest{StorageJSON: jsonBytes(c)}); statusOf(err) != 401 {
+		t.Fatalf("usage queries enabled manual-disabled inference: %v", err)
 	}
 }
 

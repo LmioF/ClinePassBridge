@@ -40,10 +40,6 @@ type QuotaBlock struct {
 	Limits      []QuotaBlockLimit `json:"limits"`
 }
 
-func quotaAutoPauseEnabled(cfg Config) bool {
-	return cfg.QuotaAutoPause == nil || *cfg.QuotaAutoPause
-}
-
 func quotaKeyHash(c Credential) string { return estimateHash("quota-key", c.APIKey) }
 
 func normalizeQuotaCredential(c Credential) Credential {
@@ -79,7 +75,7 @@ func (s *Service) quotaStatus(credentialID string) map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := normalizeQuotaCredential(s.creds[credentialID])
-	paused := quotaAutoPauseEnabled(s.cfg) && c.QuotaBlock != nil
+	paused := c.QuotaBlock != nil
 	// Copy via JSON so callers never receive mutable live state.
 	var block map[string]any
 	if c.QuotaBlock != nil {
@@ -89,7 +85,7 @@ func (s *Service) quotaStatus(credentialID string) map[string]any {
 		}
 	}
 	return map[string]any{
-		"quota_auto_pause": quotaAutoPauseEnabled(s.cfg), "manual_disabled": c.Disabled,
+		"quota_auto_pause": true, "manual_disabled": c.Disabled,
 		"quota_paused": paused, "effective_disabled": c.Disabled || paused,
 		"quota_block": block, "persistence_error": s.quotaWriteErrors[credentialID],
 	}
@@ -164,17 +160,14 @@ func (s *Service) persistQuotaCredential(next Credential) (err error) {
 	return nil
 }
 
-// Call after saving Config.QuotaAutoPause. Rewriting a quota revision makes the
-// watcher apply a changed effective Disabled even when the block itself is equal.
+// Retry failed quota writes without changing any operator-owned credential fields.
 func (s *Service) reconcileQuotaScheduling() error {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
 	s.mu.RLock()
-	disabled := !quotaAutoPauseEnabled(s.cfg)
-	changed := disabled != s.quotaAppliedDisabled
 	var creds []Credential
 	for _, c := range s.creds {
-		if c.QuotaBlock != nil && changed || s.quotaWriteErrors[c.ID] != "" {
+		if s.quotaWriteErrors[c.ID] != "" {
 			creds = append(creds, normalizeQuotaCredential(c))
 		}
 	}
@@ -184,11 +177,6 @@ func (s *Service) reconcileQuotaScheduling() error {
 		if err := s.persistQuotaCredential(c); err != nil {
 			errs = append(errs, err)
 		}
-	}
-	if len(errs) == 0 {
-		s.mu.Lock()
-		s.quotaAppliedDisabled = disabled
-		s.mu.Unlock()
 	}
 	return errors.Join(errs...)
 }
@@ -360,8 +348,8 @@ func quotaUsageHasRoom(block *QuotaBlock, value credentialUsage, started time.Ti
 	return true
 }
 
-// Runs only after an actual usage response, outside mu. Queries keep running
-// for automatically paused keys because the manual Disabled flag stays false.
+// Runs only after an actual usage response, outside mu. Manual Disabled and
+// quota blocks never stop usage queries; recovery only clears quota-owned state.
 func (s *Service) observeQuotaUsage(source Credential, value credentialUsage, started time.Time) error {
 	if value.Status != "ok" || value.UpdatedAt == nil {
 		return nil

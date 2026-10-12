@@ -130,7 +130,6 @@ type Model struct {
 	Providers        []string                `json:"providers" yaml:"providers"`
 }
 type Config struct {
-	QuotaAutoPause   *bool                   `json:"quota_auto_pause,omitempty" yaml:"quota_auto_pause,omitempty"`
 	ReasoningMapping *ReasoningMappingConfig `json:"reasoning_mapping,omitempty" yaml:"reasoning_mapping,omitempty"` // Legacy global mapping; migrated during validation.
 	DataDir          string                  `json:"data_dir" yaml:"data_dir"`
 	BaseURL          string                  `json:"base_url" yaml:"base_url"`

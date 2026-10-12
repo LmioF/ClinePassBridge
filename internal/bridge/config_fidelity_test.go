@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestConfigFidelityRejectedPUTPreservesStateAndDisk(t *testing.T) {
@@ -185,4 +186,58 @@ func configFidelityCredentialFields(t *testing.T, raw []byte) map[string]json.Ra
 		t.Fatal("credential fixture is not a JSON object")
 	}
 	return fields
+}
+
+func TestConfigFidelityLegacyQuotaAutoPauseIgnored(t *testing.T) {
+	for _, settings := range []bool{false, true} {
+		t.Run(fmt.Sprintf("settings-%t", settings), func(t *testing.T) {
+			s := NewService()
+			dataDir := t.TempDir()
+			path := filepath.Join(dataDir, "settings.json")
+			if settings {
+				if err := os.WriteFile(path, []byte(`{"quota_auto_pause":false,"timeout_seconds":120}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			configYAML := fmt.Sprintf("data_dir: %q\nquota_auto_pause: false\n", filepath.ToSlash(dataDir))
+			if err := s.configure(jsonBytes(map[string]any{"config_yaml": []byte(configYAML)})); err != nil {
+				t.Fatal(err)
+			}
+			if settings && s.config().TimeoutSeconds != 120 {
+				t.Fatal("legacy quota option caused unrelated settings to be discarded")
+			}
+			if bytes.Contains(jsonBytes(s.config()), []byte("quota_auto_pause")) {
+				t.Fatal("removed quota option remained in public configuration")
+			}
+			result, err := s.management(jsonBytes(ManagementRequest{Method: "PUT", Path: apiBase + "/config", Body: []byte(`{"quota_auto_pause":false,"timeout_seconds":180}`)}))
+			if err != nil || result.(ManagementResponse).StatusCode != 200 {
+				t.Fatalf("legacy config update was not compatible: %v", err)
+			}
+			stored, err := os.ReadFile(path)
+			if err != nil || bytes.Contains(stored, []byte("quota_auto_pause")) || s.config().TimeoutSeconds != 180 {
+				t.Fatal("legacy config option was persisted or an unrelated update was lost")
+			}
+			result, err = s.management(jsonBytes(ManagementRequest{Method: "PUT", Path: apiBase + "/scheduling", Body: []byte(`{"quota_auto_pause":false}`)}))
+			if err != nil || result.(ManagementResponse).StatusCode != 404 {
+				t.Fatalf("removed scheduling write endpoint is still accepted: %v", err)
+			}
+			c := Credential{ID: "one", APIKey: "quota-key"}
+			now := time.Now().UTC()
+			c.QuotaBlock = &QuotaBlock{KeyHash: quotaKeyHash(c), Source: "usage", BlockedAt: now, ObservedAt: now, Limits: []QuotaBlockLimit{{Type: "weekly"}}}
+			if authData(c, "one.json").(map[string]any)["Disabled"] != true {
+				t.Fatal("legacy false configuration disabled quota protection")
+			}
+			// Inspect actual route registration as well as dispatcher behavior.
+			routes, err := s.registerManagement(nil)
+			_, _ = s.Handle("plugin.shutdown", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, route := range routes.(map[string]any)["routes"].([]map[string]string) {
+				if route["Method"] == "PUT" && route["Path"] == apiBase+"/scheduling" {
+					t.Fatal("removed scheduling write endpoint remains registered")
+				}
+			}
+		})
+	}
 }

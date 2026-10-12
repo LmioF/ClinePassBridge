@@ -43,7 +43,7 @@ type usageCacheEntry struct {
 }
 
 func usageFingerprint(c Credential) [32]byte {
-	return sha256.Sum256(jsonBytes([]any{c.APIKey, c.ProxyURL, c.Disabled}))
+	return sha256.Sum256(jsonBytes([]any{c.APIKey, c.ProxyURL}))
 }
 
 func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) {
@@ -65,15 +65,6 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 		if entry == nil || entry.fingerprint != fingerprint {
 			entry = &usageCacheEntry{fingerprint: fingerprint, value: credentialUsage{ID: credentialID, Limits: []usageLimit{}}}
 			s.usageCache[credentialID] = entry
-		}
-		if c.Disabled {
-			value := entry.value
-			now := time.Now().UTC()
-			value.CheckedAt = &now
-			value.Status, value.Error = "disabled", "凭据已停用，暂停查询"
-			value.Estimate = s.estimateViewLocked(c, value)
-			s.mu.Unlock()
-			return value, nil
 		}
 		if done := entry.done; done != nil {
 			s.mu.Unlock()

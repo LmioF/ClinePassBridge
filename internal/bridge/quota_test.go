@@ -172,8 +172,11 @@ func TestQuotaFailedPersistenceRetainsBlockAndFreshRecovery(t *testing.T) {
 	}
 }
 
-func TestQuotaToggleAndKeyRotation(t *testing.T) {
+func TestQuotaAlwaysPausedAndKeyRotation(t *testing.T) {
 	s := NewService()
+	if err := decodeConfigJSON([]byte(`{"quota_auto_pause":false}`), &s.cfg); err != nil {
+		t.Fatal(err)
+	}
 	c := Credential{ID: "one", APIKey: "fixture-old", RoutingID: "rotated-routing-id"}
 	quotaTestAuth(t, s, c)
 	quotaErr := &upstreamError{APIError: &APIError{429, "upstream_quota_exhausted", "quota exhausted"}, QuotaType: "weekly"}
@@ -181,20 +184,25 @@ func TestQuotaToggleAndKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := s.creds[c.ID].QuotaRevision
-	enabled := false
-	s.cfg.QuotaAutoPause = &enabled
 	if err := s.reconcileQuotaScheduling(); err != nil {
 		t.Fatal(err)
 	}
-	if s.creds[c.ID].QuotaRevision == before || quotaTestParse(t, s, c.ID, quotaTestRead(t, s, c.ID))["Disabled"] != false {
-		t.Fatal("toggle did not rewrite watcher state")
+	if s.creds[c.ID].QuotaRevision != before || quotaTestParse(t, s, c.ID, quotaTestRead(t, s, c.ID))["Disabled"] != true {
+		t.Fatal("legacy false setting or reconciliation bypassed quota protection")
 	}
-	enabled = true
-	if err := s.reconcileQuotaScheduling(); err != nil {
-		t.Fatal(err)
+	status := s.quotaStatus(c.ID)
+	if status["quota_auto_pause"] != true || status["quota_paused"] != true || status["manual_disabled"] != false {
+		t.Fatal("quota pause changed the manual flag or reported a disabled policy")
 	}
-	if quotaTestParse(t, s, c.ID, quotaTestRead(t, s, c.ID))["Disabled"] != true {
-		t.Fatal("re-enable did not pause CPA auth")
+	var stored Credential
+	if json.Unmarshal(quotaTestRead(t, s, c.ID), &stored) != nil || stored.Disabled {
+		t.Fatal("effective host disabled leaked into the physical manual flag")
+	}
+	if _, err := s.selectedCredential(ExecutorRequest{StorageJSON: jsonBytes(c)}); statusOf(err) != 429 {
+		t.Fatalf("legacy false setting bypassed executor quota protection: %v", err)
+	}
+	if _, err := s.probeCredential(c.ID); statusOf(err) != 400 {
+		t.Fatalf("quota-blocked credential admitted a model probe: %v", err)
 	}
 	next := s.creds[c.ID]
 	next.APIKey = "fixture-replaced"

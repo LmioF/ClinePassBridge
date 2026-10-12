@@ -12,9 +12,6 @@ func (s *Service) schedulingResponse() (any, error) {
 	if hostErr != nil {
 		host["message"] = "当前 CPA 未提供账号运行状态；插件额度保护和出口管理仍可使用。"
 	}
-	caps := s.LocalBackoffCapabilities()
-	host["local_delay_supported"] = caps.HostSelectionDelay
-	host["request_cancel_observable"] = caps.RequestCancelObservable
 	s.mu.RLock()
 	creds := make([]Credential, 0, len(s.creds))
 	for _, c := range s.creds {
@@ -32,12 +29,10 @@ func (s *Service) schedulingResponse() (any, error) {
 			summary["upstream_429"] += logRequestCount(entry)
 		}
 	}
-	cfg := s.config()
-	autoPause := cfg.QuotaAutoPause == nil || *cfg.QuotaAutoPause
 	for _, c := range creds {
 		c = normalizeQuotaCredential(c)
 		windows := s.rateLimits.schedulingWindows(c.ID)
-		blocked := autoPause && c.QuotaBlock != nil
+		blocked := c.QuotaBlock != nil
 		account := map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled, "priority": priorityValue(c), "quota_blocked": blocked, "backoffs": windows}
 		if c.QuotaBlock != nil {
 			labels := map[string]string{"five_hour": "五小时", "weekly": "每周", "monthly": "每月"}
@@ -74,25 +69,7 @@ func (s *Service) schedulingResponse() (any, error) {
 		}
 		accounts = append(accounts, account)
 	}
-	return managementJSON(200, map[string]any{"observed_at": time.Now().UTC(), "quota_auto_pause": autoPause, "accounts": accounts, "summary": summary, "host": host, "counts_scope": "retained_plugin_logs"})
-}
-
-func (s *Service) updateScheduling(r ManagementRequest) (any, error) {
-	var in struct {
-		QuotaAutoPause *bool `json:"quota_auto_pause"`
-	}
-	if json.Unmarshal(r.Body, &in) != nil || in.QuotaAutoPause == nil {
-		return managementJSON(400, map[string]any{"error": "请指定额度自动暂停策略"})
-	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	cfg := s.config()
-	cfg.QuotaAutoPause = in.QuotaAutoPause
-	if err := s.saveConfig(cfg); err != nil {
-		return managementJSON(statusOf(err), map[string]any{"error": safeError(err)})
-	}
-	s.wakeUsageSampler()
-	return managementJSON(200, map[string]any{"quota_auto_pause": *in.QuotaAutoPause})
+	return managementJSON(200, map[string]any{"observed_at": time.Now().UTC(), "quota_auto_pause": true, "accounts": accounts, "summary": summary, "host": host, "counts_scope": "retained_plugin_logs"})
 }
 
 // Join public (redacted) configuration with group budgets for the console.

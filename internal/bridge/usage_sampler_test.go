@@ -279,22 +279,22 @@ func TestUsageSamplerSecondRoundKeepsFreshCache(t *testing.T) {
 	}
 }
 
-func TestUsageSamplerGroupsAccountKeysAndSkipsPaused(t *testing.T) {
+func TestUsageSamplerGroupsAccountKeysIncludingDisabled(t *testing.T) {
 	host := newSamplerHost()
-	host.accounts["k1"], host.accounts["k2"], host.accounts["k3"] = "acct-a", "acct-a", "acct-b"
+	host.accounts["k1"], host.accounts["k2"], host.accounts["k3"], host.accounts["k4"] = "acct-a", "acct-a", "acct-b", "acct-a"
 	paused := samplerCredential("paused", "k4")
 	paused.Disabled = true
 	proxied := samplerCredential("proxied", "k5")
 	proxied.ProxyURL = "http://127.0.0.1:1"
 	s := samplerService(t, host, samplerCredential("one", "k1"), samplerCredential("two", "k2"), samplerCredential("three", "k3"), paused, proxied)
 	startSampler(t, s)
-	waitSampler(t, samplerLedger(s, "ok", "one", "two", "three"))
+	waitSampler(t, samplerLedger(s, "ok", "one", "two", "three", "paused"))
 	waitSampler(t, samplerLedger(s, "unavailable", "proxied"))
 	if targets := s.usageSamplingTargets(time.Now()); len(targets) != 0 {
 		t.Fatalf("round one left work: %v", targets)
 	}
 
-	ageSamplerCache(t, s, 2*usageTTL, "one", "two", "three")
+	ageSamplerCache(t, s, 2*usageTTL, "one", "two", "three", "paused")
 	targets := s.usageSamplingTargets(time.Now())
 	if len(targets) != 2 || targets[0] != "one" || targets[1] != "three" {
 		t.Fatalf("same-account keys were not grouped: %v", targets)
@@ -315,9 +315,38 @@ func TestUsageSamplerGroupsAccountKeysAndSkipsPaused(t *testing.T) {
 		t.Fatalf("grouped account keys = %v", keys)
 	}
 	for _, req := range host.snapshot() {
-		if req.key == "k4" || req.key == "k5" {
-			t.Fatalf("paused or proxied credential was sampled: %+v", req)
+		if req.key == "k5" {
+			t.Fatalf("credential proxy was bypassed: %+v", req)
 		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.creds[paused.ID].Disabled || !s.usageCache[paused.ID].value.CheckedAt.Equal(*s.usageCache["one"].value.CheckedAt) {
+		t.Fatal("grouped sampling lost manual-disabled state or left stale usage")
+	}
+}
+
+func TestUsageSamplerOnlyDisabledAccountKeepsManualState(t *testing.T) {
+	host := newSamplerHost()
+	host.accounts["disabled-key"] = "disabled-account"
+	c := samplerCredential("disabled", "disabled-key")
+	c.Disabled = true
+	s := samplerService(t, host, c)
+	quotaTestAuth(t, s, c)
+	excluded := []Credential{samplerCredential("revoked", "revoked-key"), samplerCredential("empty", "")}
+	for _, other := range excluded {
+		s.creds[other.ID] = other
+	}
+	s.revoked["revoked"] = true
+	if targets := s.usageSamplingTargets(time.Now()); len(targets) != 1 || targets[0] != c.ID {
+		t.Fatalf("manual-disabled account was skipped or invalid credentials were sampled: %v", targets)
+	}
+	s.sampleUsage()
+	if !samplerLedger(s, "ok", c.ID)() || len(host.snapshot()) != 2 || !s.creds[c.ID].Disabled {
+		t.Fatal("background usage sampling failed or enabled a disabled account")
+	}
+	if quotaTestParse(t, NewService(), c.ID, quotaTestRead(t, s, c.ID))["Disabled"] != true {
+		t.Fatal("background sampling changed persisted manual disable")
 	}
 }
 

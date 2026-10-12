@@ -58,7 +58,7 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(s.creds))
 	for id, c := range s.creds {
-		if !c.Disabled && !s.revoked[id] && c.APIKey != "" {
+		if !s.revoked[id] && c.APIKey != "" {
 			ids = append(ids, id)
 		}
 	}
@@ -134,7 +134,7 @@ func (s *Service) shareAccountUsageLocked(sourceID string, value credentialUsage
 	}
 	for id, entry := range s.usageCache {
 		c, exists := s.creds[id]
-		if id == sourceID || !exists || c.Disabled || s.revoked[id] || entry.done != nil || entry.fingerprint != usageFingerprint(c) || entry.value.Status != "ok" || entry.value.accountHash != value.accountHash {
+		if id == sourceID || !exists || s.revoked[id] || entry.done != nil || entry.fingerprint != usageFingerprint(c) || entry.value.Status != "ok" || entry.value.accountHash != value.accountHash {
 			continue
 		}
 		if entry.value.UpdatedAt != nil && value.UpdatedAt != nil && entry.value.UpdatedAt.After(*value.UpdatedAt) {
