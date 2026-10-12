@@ -2,32 +2,85 @@
 const schedulingView = { dirty: false, data: null, egress: null, loading: false, saving: false, editing: '', revision: 0 };
 const schedulingTime = (value) => value ? new Date(value).toLocaleString() : '—';
 function schedulingBadge(label, tone = '') { return `<span class="badge ${tone}">${esc(label)}</span>`; }
-function renderScheduling(data) {
-  schedulingView.data = data;
-  const counts = data.summary || {};
-  $('scheduleSummary').innerHTML = [
-    ['参与调度', counts.available ?? 0], ['额度暂停', counts.quota_blocked ?? 0],
-    ['本地拦截（留存日志）', counts.local_rejected ?? 0], ['上游 429（留存日志）', counts.upstream_429 ?? 0]
-  ].map(([label, value]) => `<div class="summary-item"><div class="summary-label">${label}</div><div class="summary-value">${esc(value)}</div></div>`).join('');
-  $('quotaAutoPause').checked = data.quota_auto_pause !== false;
-  $('scheduleHostStatus').textContent = data.host?.available ? '已连接 CPA 调度状态' : '当前宿主未提供调度状态';
-  $('scheduleHostStatus').title = data.host?.message || 'CPA 选号前的拒绝不计入插件请求日志。';
-  const delay = data.host?.local_delay_supported;
-  $('scheduleDelayStatus').textContent = delay ? '本地 429 · 5 秒延迟' : '插件本地 429 · 5 秒延迟';
-  $('scheduleDelayStatus').title = (delay ? '已支持 CPA 选号前拒绝与插件本地退避。' : 'CPA 选号前的拒绝需要配套宿主支持；插件常规功能不依赖此扩展。') + (data.host?.request_cancel_observable ? '已支持客户端取消观察。' : '当前宿主按插件超时或停止信号结束等待。');
-  $('scheduleAccounts').innerHTML = (data.accounts || []).map((account) => {
-    let badge = schedulingBadge('可用', 'good');
-    if (account.enabled === false) badge = schedulingBadge('手动停用');
-    else if (account.quota_blocked) badge = schedulingBadge('额度暂停', 'bad');
-    else if (account.host?.disabled) badge = schedulingBadge('宿主停用', 'warn');
-    else if (account.host?.unavailable || account.backoffs?.length) badge = schedulingBadge('冷却中', 'warn');
-    const reason = [account.quota_reason || account.host?.message || '', account.persistence_error ? `状态保存失败：${account.persistence_error}` : ''].filter(Boolean).join(' · ');
-    const retry = account.retry_at || account.host?.next_retry_after;
-    const windows = (account.backoffs || []).map((item) => `<div class="subtext">${esc(item.model)} · ${esc(schedulingTime(item.retry_at))}</div>`).join('');
-    return `<div class="schedule-account"><div class="schedule-account-main"><strong>${esc(account.label || account.id)}</strong>${badge}<span class="subtext">优先级 ${esc(account.priority || 0)}</span></div><div class="schedule-account-detail">${reason ? `<span class="subtext" title="${esc(reason)}">${esc(reason)}</span>` : ''}${retry ? `<span class="subtext">复查 / 恢复 ${esc(schedulingTime(retry))}</span>` : ''}${windows}</div><div class="row-actions"><button type="button" class="button compact" data-schedule-action="refresh" data-id="${esc(account.id)}">复查用量</button><button type="button" class="button compact" data-schedule-action="toggle" data-id="${esc(account.id)}" data-enabled="${account.enabled === false}">${account.enabled === false ? '启用' : '停用'}</button><button type="button" class="button compact" data-schedule-action="reset" data-id="${esc(account.id)}" ${account.quota_blocked || account.enabled === false ? 'disabled' : ''} title="清除插件退避并尝试清除 CPA 冷却，不改变上游额度">清除冷却</button></div></div>`;
-  }).join('') || '<div class="empty">添加凭据后，这里会显示调度状态。</div>';
-  $('scheduleUpdated').textContent = `更新于 ${schedulingTime(data.observed_at)}`;
+const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, revision: 0 };
+function credentialSchedule(id) { return credentialScheduling.accounts.get(id); }
+function credentialScheduleBadges(item) {
+  const a = credentialSchedule(item.id), badges = [];
+  if (item.enabled === false) badges.push(schedulingBadge('人工停用'));
+  if (a?.quota_blocked) badges.push(schedulingBadge('额度耗尽 · 自动暂停', 'bad'));
+  if (a?.persistence_error) badges.push(schedulingBadge('状态保存失败', 'bad'));
+  if (item.enabled !== false && !a?.quota_blocked) {
+    if (!a) badges.push(schedulingBadge('调度状态待查询'));
+    else if (a.host?.disabled) badges.push(schedulingBadge('宿主停用', 'warn'));
+    else if (a.host?.unavailable || a.backoffs?.length) badges.push(schedulingBadge('冷却中', 'warn'));
+    else badges.push(schedulingBadge('参与调度', 'good'));
+  }
+  return badges.join('');
 }
+function credentialScheduleDetail(item) {
+  const a = credentialSchedule(item.id); if (!a) return '';
+  const reason = [a.quota_reason || a.host?.message || '', a.persistence_error ? `状态保存失败：${a.persistence_error}` : ''].filter(Boolean).join(' · ');
+  const retry = a.retry_at || a.host?.next_retry_after;
+  return `${reason ? `<span class="subtext" title="${esc(reason)}">${esc(reason)}</span>` : ''}${retry ? `<span class="subtext">${a.quota_blocked ? '额度复查' : '冷却至'} ${esc(schedulingTime(retry))}</span>` : ''}${(a.backoffs || []).map(w => `<span class="subtext">${esc(w.model)} · 冷却至 ${esc(schedulingTime(w.retry_at))}</span>`).join('')}`;
+}
+function updateCredentialScheduling() {
+  for (const row of $('credentialList').children) {
+    const item = credentialView.items.find(a => a.id === row.dataset.id); if (!item) continue;
+    const a = credentialSchedule(item.id);
+    row.classList.toggle('quota-paused', !!a?.quota_blocked);
+    row.querySelector('.credential-schedule-badges').innerHTML = credentialScheduleBadges(item);
+    row.querySelector('.credential-schedule-detail').innerHTML = credentialScheduleDetail(item);
+    const toggle = row.querySelector('.credential-enabled');
+    toggle.checked = item.enabled !== false;
+    toggle.disabled = credentialScheduling.pending.has(item.id);
+    row.querySelector('.reset-cooldown').disabled = item.enabled === false || !!a?.quota_blocked || credentialScheduling.pending.has(item.id);
+  }
+}
+async function loadCredentialScheduling() {
+  if (credentialScheduling.loading || !authGate.verified || authGate.paused) return;
+  credentialScheduling.loading = true;
+  const revision = credentialScheduling.revision;
+  try {
+    const data = await api('/scheduling');
+    if (revision !== credentialScheduling.revision) return;
+    credentialScheduling.accounts = new Map((data.accounts || []).map(a => [a.id, a]));
+    for (const item of credentialView.items) {
+      const current = credentialSchedule(item.id);
+      if (current && !credentialScheduling.pending.has(item.id)) item.enabled = current.enabled;
+    }
+    updateCredentialScheduling();
+    $('credentialState').textContent = '';
+  } catch (error) { $('credentialState').textContent = `调度状态读取失败：${error.message}`; }
+  finally {
+    credentialScheduling.loading = false;
+    if (revision !== credentialScheduling.revision && !credentialScheduling.pending.size) loadCredentialScheduling();
+  }
+}
+async function changeCredentialScheduling(id, action, enabled) {
+  if (credentialScheduling.pending.has(id)) return;
+  credentialScheduling.revision++;
+  credentialScheduling.pending.add(id); updateCredentialScheduling();
+  try {
+    if (action === 'toggle') {
+      await api('/scheduling/credential', { method: 'PUT', body: { id, enabled } });
+      const item = credentialView.items.find(a => a.id === id); if (item) item.enabled = enabled;
+      syncModelTestCredentials(); syncClearAffinityControls();
+    } else {
+      const result = await api('/scheduling/reset', { method: 'POST', body: { id } });
+      if (result.warning) toast(result.warning);
+    }
+  } catch (error) { toast(error.message); }
+  finally { credentialScheduling.pending.delete(id); updateCredentialScheduling(); await loadCredentialScheduling(); }
+}
+$('credentialList').addEventListener('change', (event) => {
+  const input = event.target.closest('.credential-enabled');
+  if (input) changeCredentialScheduling(input.dataset.id, 'toggle', input.checked);
+});
+$('credentialList').addEventListener('click', (event) => {
+  const button = event.target.closest('.reset-cooldown');
+  if (button && !button.disabled) changeCredentialScheduling(button.dataset.id, 'reset');
+});
+setInterval(() => { if (usageViewVisible()) loadCredentialScheduling(); }, 15000);
 function renderEgress(data) {
   schedulingView.egress = data;
   $('egressEnabled').checked = !!data.enabled;
@@ -38,16 +91,15 @@ function renderEgress(data) {
     return `<div class="egress-row"><div class="schedule-account-main"><strong>${esc(item.label || item.id)}</strong>${badge}<span class="subtext mono">${esc(item.proxy_url === 'direct' ? '直连' : (item.proxy_url || '代理已保存'))}</span></div><div class="egress-metrics"><span>最近 60 秒 <b>${esc(status.requests_last_minute ?? 0)} / ${esc(item.rpm)}</b></span><span>在飞 <b>${esc(status.inflight ?? 0)} / ${esc(item.max_inflight)}</b></span><span title="相同真实出口 IP 使用同一分组，共享速率和并发预算">出口组 <b>${esc(item.group || item.id)}</b></span>${status.retry_at ? `<span>恢复 ${esc(schedulingTime(status.retry_at))}</span>` : ''}</div><div class="row-actions"><button type="button" class="button compact" data-egress-edit="${esc(item.id)}">编辑</button><button type="button" class="button compact danger" data-egress-delete="${esc(item.id)}">移除</button></div></div>`;
   }).join('') || `<div class="empty">${data.enabled ? '出口池已开启，但尚未配置出口' : '尚未配置出口 · 当前沿用 CPA 原有代理设置'}</div>`;
 }
-async function loadScheduling() {
+async function loadEgress() {
   if (schedulingView.loading || schedulingView.saving) return;
-  schedulingView.loading = true;
-  $('refreshScheduling').disabled = true;
+  schedulingView.loading = true; $('refreshEgress').disabled = true;
   try {
-    const [schedule, egress] = await Promise.all([api('/scheduling'), api('/egress')]);
-    renderScheduling(schedule); if (!schedulingView.dirty) renderEgress(egress);
-    $('scheduleState').textContent = '';
-  } catch (error) { $('scheduleState').textContent = `读取失败：${error.message}`; }
-  finally { schedulingView.loading = false; $('refreshScheduling').disabled = false; }
+    const egress = await api('/egress');
+    if (!schedulingView.dirty) renderEgress(egress);
+    $('egressState').textContent = '';
+  } catch (error) { $('egressState').textContent = `读取失败：${error.message}`; }
+  finally { schedulingView.loading = false; $('refreshEgress').disabled = false; }
 }
 async function updateEgress(endpoints) {
   if (schedulingView.saving || !schedulingView.egress) return false;
@@ -76,25 +128,8 @@ function openEgressDialog(id = '') {
   $('egressDialogState').textContent = '';
   $('egressDialog').showModal(); $('egressLabel').focus();
 }
-$('schedulingTab').addEventListener('click', () => setTab('scheduling'));
-$('refreshScheduling').addEventListener('click', loadScheduling);
-$('quotaAutoPause').addEventListener('change', async () => {
-  const input = $('quotaAutoPause'); input.disabled = true;
-  try { await api('/scheduling', { method: 'PUT', body: { quota_auto_pause: input.checked } }); toast('额度策略已保存'); }
-  catch (error) { input.checked = !input.checked; toast(error.message); }
-  finally { input.disabled = false; loadScheduling(); }
-});
-$('scheduleAccounts').addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-schedule-action]'); if (!button) return;
-  button.disabled = true;
-  try {
-    if (button.dataset.scheduleAction === 'refresh') await api('/credentials/usage', { query: { id: button.dataset.id, refresh: '1' } });
-    else if (button.dataset.scheduleAction === 'toggle') await api('/scheduling/credential', { method: 'PUT', body: { id: button.dataset.id, enabled: button.dataset.enabled === 'true' } });
-    else { const result = await api('/scheduling/reset', { method: 'POST', body: { id: button.dataset.id } }); if (result.warning) toast(result.warning); }
-    await loadScheduling();
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; }
-});
+$('egressTab').addEventListener('click', () => setTab('egress'));
+$('refreshEgress').addEventListener('click', loadEgress);
 $('openEgress').addEventListener('click', () => openEgressDialog());
 $('egressControls').addEventListener('input', () => { schedulingView.dirty = true; });
 $('saveEgress').addEventListener('click', () => updateEgress(egressEditableRows()));
@@ -116,4 +151,4 @@ $('egressForm').addEventListener('submit', async (event) => {
   try { if (await updateEgress(endpoints)) $('egressDialog').close(); else $('egressDialogState').textContent = $('egressState').textContent; }
   finally { $('submitEgress').disabled = false; $('cancelEgress').disabled = false; }
 });
-setInterval(() => { if (!document.hidden && !$('schedulingPanel').hidden && !$('egressDialog').open && !schedulingView.dirty && document.activeElement?.closest('#egressControls') == null) loadScheduling(); }, 15000);
+setInterval(() => { if (!document.hidden && !$('egressPanel').hidden && !$('egressDialog').open && !schedulingView.dirty && document.activeElement?.closest('#egressControls') == null) loadEgress(); }, 15000);

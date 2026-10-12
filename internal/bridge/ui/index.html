@@ -317,7 +317,7 @@
     .schedule-tools label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
     .schedule-tools input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
     #egressWait { width: 80px; }
-    #schedulingPanel > .panel { margin-top: 16px; }
+    #egressPanel > .panel { margin-top: 16px; }
     @media (max-width: 740px) {
       .schedule-account, .egress-row { grid-template-columns: minmax(0, 1fr); }
       .schedule-account > .row-actions, .egress-row > .row-actions { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
@@ -379,6 +379,25 @@
       .candidate-tools { flex-wrap: wrap; }
       .candidate-tools .control { flex-basis: 100%; }
     }
+
+    .tabs { overflow-x: auto; overflow-y: hidden; }
+    .tab { flex-shrink: 0; }
+    .credential-title { flex-wrap: wrap; }
+    .credential-schedule-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+    .credential-schedule-detail { display: grid; gap: 4px; margin-top: 8px; overflow-wrap: anywhere; }
+    .credential-row { position: relative; isolation: isolate; }
+    .credential-row.quota-paused { border-color: color-mix(in srgb, #dc5252 45%, var(--line)); }
+    .credential-row.quota-paused::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit; background: color-mix(in srgb, #dc5252 9%, transparent); }
+    .credential-bottom .row-actions { flex-wrap: wrap; }
+    .credential-toggle { position: relative; display: inline-flex; align-items: center; gap: 10px; min-height: 36px; color: var(--muted); cursor: pointer; font-size: 12px; }
+    .credential-toggle input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .toggle-track { display: inline-block; width: 46px; height: 26px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 30%, var(--surface)); transition: background .15s; pointer-events: none; }
+    .toggle-track::after { content: ""; display: block; width: 20px; height: 20px; margin: 3px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; transition: transform .15s; }
+    .credential-toggle input:checked + .toggle-track { background: #8c8983; }
+    .credential-toggle input:checked + .toggle-track::after { transform: translateX(20px); }
+    .credential-toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .credential-toggle:has(input:disabled) { opacity: .55; cursor: wait; }
+    @media (prefers-reduced-motion: reduce) { .toggle-track, .toggle-track::after { transition: none; } }
   </style>
 </head>
 <body>
@@ -392,23 +411,17 @@
     <div class="tabs" role="tablist" aria-label="管理视图">
       <button class="tab" id="logsTab" role="tab" aria-selected="true" aria-controls="logsPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3Z"/><path d="M15 3v5h5M8 12h8M8 16h5"/></svg><span>请求日志</span></button>
       <button class="tab" id="pinTab" role="tab" aria-selected="false" aria-controls="pinPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-4 1-4 4-1 4-5-5 4-1 4-4 1-4ZM7 17l-4 4"/></svg><span>钉上游</span></button>
+      <button class="tab" id="credentialsTab" role="tab" aria-selected="false" aria-controls="credentialsPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M18 8v6M15 11h6"/></svg><span>凭据管理</span></button>
+      <button class="tab" id="modelsTab" role="tab" aria-selected="false" aria-controls="modelsPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h7v6H3zM14 13h7v6h-7zM10 8h7v5M7 11v5h7"/></svg><span>模型映射</span></button>
       <button class="tab" id="configTab" role="tab" aria-selected="false" aria-controls="configPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h7m4 0h5M4 17h3m4 0h9"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>配置概览</span></button>
-      <button class="tab" id="schedulingTab" role="tab" aria-selected="false" aria-controls="schedulingPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16"/><circle cx="8" cy="5" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="19" r="2"/></svg><span>调度与限流</span></button>
+      <button class="tab" id="egressTab" role="tab" aria-selected="false" aria-controls="egressPanel" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16"/><circle cx="8" cy="5" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="19" r="2"/></svg><span>代理池</span></button>
     </div>
 
 
-    <section id="schedulingPanel" role="tabpanel" aria-labelledby="schedulingTab" hidden>
-      <div class="toolbar"><button class="button compact" id="refreshScheduling" type="button">刷新状态</button><span class="badge" id="scheduleDelayStatus" title="本地拒绝返回前等待5秒，实际恢复取决于冷却和额度状态。">插件本地 429 · 5 秒延迟</span><span class="count" id="scheduleUpdated"></span></div>
-      <div class="summary" id="scheduleSummary"></div>
+    <section id="egressPanel" role="tabpanel" aria-labelledby="egressTab" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>账号调度</h2><label class="schedule-tools" title="任一套餐窗口耗尽时暂停调度，复查确认恢复后重新参与；保留手动停用。"><input id="quotaAutoPause" type="checkbox">额度耗尽自动暂停</label></div>
-        <div id="scheduleAccounts"><div class="empty">正在读取调度状态…</div></div>
-        <div class="credential-footer"><span class="subtext" id="scheduleHostStatus"></span></div>
-        <p class="inline-state" id="scheduleState" role="status"></p>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>代理出口池</h2><button class="button compact primary" id="openEgress" type="button">添加出口</button></div>
-        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后产生本地429，再按本地退避规则延迟返回。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
+        <div class="panel-head"><h2>代理池</h2><div class="row-actions"><button class="button compact" id="refreshEgress" type="button">刷新状态</button><button class="button compact primary" id="openEgress" type="button">添加出口</button></div></div>
+        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后立即返回本地 429。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
         <div id="egressList"><div class="empty">正在读取出口…</div></div>
         <p class="inline-state" id="egressState" role="status"></p>
       </div>
@@ -486,9 +499,9 @@
       </div>
     </section>
 
-    <section id="configPanel" role="tabpanel" aria-labelledby="configTab" hidden>
+    <section id="credentialsPanel" role="tabpanel" aria-labelledby="credentialsTab" hidden>
       <div class="panel credentials-panel">
-        <div class="panel-head"><div><h2>凭据与套餐用量</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p><p class="subtext">列表按优先级从高到低排序，同优先级按备注名排序。</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
+        <div class="panel-head"><div><h2 title="按优先级从高到低排序；额度耗尽自动暂停，复查确认恢复后重新调度。人工停用独立保留。">凭据管理</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
         <div class="toolbar credential-tools">
           <input class="control search" id="credentialSearch" type="search" placeholder="搜索凭据名称或 ID" aria-label="搜索凭据">
           <button class="button compact" id="refreshUsage" type="button">刷新本页用量</button>
@@ -499,6 +512,8 @@
         <div class="credential-footer"><p class="panel-hint">后台按账号约每分钟采样 · 时间为本地时区</p><div class="pagination" id="credentialPagination" hidden><button class="button compact" id="credentialPrev" type="button">上一页</button><span id="credentialPageInfo"></span><button class="button compact" id="credentialNext" type="button">下一页</button></div></div>
         <p class="inline-state" id="credentialState" role="status"></p>
       </div>
+    </section>
+    <section id="modelsPanel" role="tabpanel" aria-labelledby="modelsTab" hidden>
       <div class="config-grid">
         <div class="panel">
           <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><div class="row-actions"><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
@@ -506,7 +521,6 @@
           <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
           <p class="inline-state" id="modelState"></p>
         </div>
-        <div class="config-side">
         <div class="panel">
           <div class="panel-head"><div><h2>思考强度映射</h2><p class="panel-hint" title="按所选模型配置顶层 reasoning_effort，正式请求与管理页测试共用。未添加规则的强度直接透传。已有 thinking / reasoning 配置且未传 reasoning_effort 时，保留原策略。">请求传入 → 发往上游</p></div><a class="button compact" href="https://api-docs.deepseek.com/zh-cn/guides/thinking_mode" target="_blank" rel="noopener noreferrer">默认表依据 ↗</a></div>
           <form class="form-stack" id="reasoningMappingForm">
@@ -517,6 +531,10 @@
           </form>
           <p class="inline-state" id="reasoningMappingState" role="status"></p>
         </div>
+      </div>
+    </section>
+    <section id="configPanel" role="tabpanel" aria-labelledby="configTab" hidden>
+      <div class="config-grid">
         <div class="panel">
           <div class="panel-head"><div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div><button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button></div>
           <form class="form-stack" id="settingsForm">
@@ -526,7 +544,6 @@
             <div class="form-foot"><button class="button primary" id="saveSettings" type="submit">保存设置</button></div>
           </form>
           <p class="inline-state" id="settingsState"></p>
-        </div>
         </div>
         <div class="panel auth-panel">
           <div class="panel-head"><div><h2>管理鉴权（兜底）</h2><p class="panel-hint">用于读取日志和修改插件配置。优先复用同源 CPA / CPAMP 保存的登录；鉴权失败时可输入当前管理入口的密钥。</p></div></div>
@@ -1251,7 +1268,7 @@
       syncProviderProbeControls();
     }
     function renderPinModelRows() {
-      $('pinModelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge ${model.providers.length ? 'good' : ''}">${model.providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据和已保存的上游白名单发送一条简短消息">测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">上游 provider 允许列表</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" value="${esc(model.providers.join(', '))}" autocomplete="off" aria-describedby="pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`).join('') : '<div class="empty"><strong>暂无模型映射</strong>请前往配置概览添加模型映射。</div>';
+      $('pinModelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge ${model.providers.length ? 'good' : ''}">${model.providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据和已保存的上游白名单发送一条简短消息">测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">上游 provider 允许列表</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" value="${esc(model.providers.join(', '))}" autocomplete="off" aria-describedby="pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`).join('') : '<div class="empty"><strong>暂无模型映射</strong>请前往模型映射标签添加模型。</div>';
       $('savePinModels').disabled = !state.models.length || state.modelBusy;
       syncProviderProbeControls();
       syncPinModelTests();
@@ -1489,7 +1506,7 @@
       const loading = credentialView.pending.has(item.id) || credentialView.queue.has(item.id);
       const stale = !!usage?.updated_at && (usage.status !== 'ok' || Date.now() - Date.parse(usage.updated_at) > 90000);
       const limits = Array.isArray(usage?.limits) ? usage.limits : [];
-      let status = loading ? '正在更新…' : usage?.error || (usage?.updated_at ? `更新于 ${usageDate(usage.updated_at)}` : item.enabled === false ? '已停用，暂停查询' : '等待查询');
+      let status = loading ? '正在更新…' : usage?.error || (usage?.updated_at ? `更新于 ${usageDate(usage.updated_at)}` : '等待查询');
       if (stale) status = `上次数据 · ${usageDate(usage.updated_at)} · ${loading ? '正在更新…' : usage.error || '数据已过期，等待刷新'}`;
       if (!loading && usage?.status === 'ok' && !limits.length) status = 'Cline 未返回用量窗口';
       return `<div class="usage-status ${stale || usage?.error ? 'stale' : ''}" role="status">${esc(status)}</div>`;
@@ -1565,7 +1582,7 @@
       row.querySelector('.credential-status').innerHTML = usageStatusHTML(item);
       row.querySelector('.credential-plan').innerHTML = usagePlanHTML(id);
       const button = row.querySelector('.refresh-usage');
-      button.disabled = item.enabled === false || credentialView.pending.has(id) || credentialView.queue.has(id);
+      button.disabled = credentialView.pending.has(id) || credentialView.queue.has(id);
       button.textContent = credentialView.pending.has(id) || credentialView.queue.has(id) ? '更新中…' : '刷新';
     }
     function renderCredentials(data, focusID = '') {
@@ -1589,19 +1606,19 @@
       credentialView.visible = filtered.slice(credentialView.page * CREDENTIAL_PAGE_SIZE, (credentialView.page + 1) * CREDENTIAL_PAGE_SIZE);
       const visibleIDs = new Set(credentialView.visible.map((item) => item.id));
       for (const id of credentialView.queue.keys()) if (!visibleIDs.has(id)) credentialView.queue.delete(id);
-      $('credentialList').innerHTML = credentialView.visible.length ? credentialView.visible.map((item) => `<div class="credential-row" data-id="${esc(item.id)}"><div class="credential-main"><div class="credential-title"><span class="primary-text" title="${esc(item.label)}">${shown(item.label, '未命名')}</span>${item.enabled === false ? '<span class="badge">已停用</span>' : ''}</div><div class="subtext mono credential-id" title="${esc(item.id)}">${esc(item.id)}</div>${present(item.priority) && Number(item.priority) !== 0 ? `<div class="subtext"><span class="badge">优先级 ${esc(item.priority)}</span></div>` : ''}<div class="credential-status">${usageStatusHTML(item)}</div></div><div class="credential-usage">${usageHTML(item)}</div><div class="credential-bottom"><div class="credential-plan">${usagePlanHTML(item.id)}</div><div class="row-actions"><button class="button compact refresh-usage" type="button" data-id="${esc(item.id)}" ${item.enabled === false || credentialView.pending.has(item.id) ? 'disabled' : ''}>刷新</button><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div></div>`).join('') : `<div class="empty">${query ? '没有匹配的凭据' : '尚未添加凭据'}</div>`;
+      $('credentialList').innerHTML = credentialView.visible.length ? credentialView.visible.map((item) => `<div class="credential-row${credentialSchedule(item.id)?.quota_blocked ? ' quota-paused' : ''}" data-id="${esc(item.id)}"><div class="credential-main"><div class="credential-title"><span class="primary-text" title="${esc(item.label)}">${shown(item.label, '未命名')}</span><span class="credential-schedule-badges">${credentialScheduleBadges(item)}</span></div><div class="subtext mono credential-id" title="${esc(item.id)}">${esc(item.id)}</div>${present(item.priority) && Number(item.priority) !== 0 ? `<div class="subtext"><span class="badge">优先级 ${esc(item.priority)}</span></div>` : ''}<div class="credential-schedule-detail">${credentialScheduleDetail(item)}</div><div class="credential-status">${usageStatusHTML(item)}</div></div><div class="credential-usage">${usageHTML(item)}</div><div class="credential-bottom"><div class="credential-plan">${usagePlanHTML(item.id)}</div><div class="row-actions"><label class="credential-toggle" title="人工启停；额度耗尽仍会自动暂停，恢复额度后再参与调度"><span>启用</span><input type="checkbox" role="switch" class="credential-enabled" data-id="${esc(item.id)}" aria-label="${esc(item.label || item.id)} 启用" ${item.enabled !== false ? 'checked' : ''} ${credentialScheduling.pending.has(item.id) ? 'disabled' : ''}><span class="toggle-track" aria-hidden="true"></span></label><button class="button compact reset-cooldown" type="button" data-id="${esc(item.id)}" ${item.enabled === false || credentialSchedule(item.id)?.quota_blocked || credentialScheduling.pending.has(item.id) ? 'disabled' : ''} title="清除插件与宿主冷却，不改变上游额度">清除冷却</button><button class="button compact refresh-usage" type="button" data-id="${esc(item.id)}" ${credentialView.pending.has(item.id) ? 'disabled' : ''}>刷新</button><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div></div>`).join('') : `<div class="empty">${query ? '没有匹配的凭据' : '尚未添加凭据'}</div>`;
       $('credentialCount').textContent = query ? `${filtered.length} / ${credentialView.items.length} 个凭据` : `${filtered.length} 个凭据`;
       $('credentialPagination').hidden = pages <= 1;
       $('credentialPageInfo').textContent = `${credentialView.page + 1} / ${pages} 页`;
       $('credentialPrev').disabled = credentialView.page === 0;
       $('credentialNext').disabled = credentialView.page + 1 >= pages;
-      $('refreshUsage').disabled = !credentialView.visible.some((item) => item.enabled !== false);
+      $('refreshUsage').disabled = !credentialView.visible.length;
       refreshVisibleUsage();
     }
-    function usageViewVisible() { return !!authGate.verified && !authGate.paused && !document.hidden && !$('configPanel').hidden; }
+    function usageViewVisible() { return !!authGate.verified && !authGate.paused && !document.hidden && !$('credentialsPanel').hidden; }
     function queueUsage(id, force = false) {
       const item = credentialView.items.find((entry) => entry.id === id);
-      if (!item || item.enabled === false || credentialView.pending.has(id)) return;
+      if (!item || credentialView.pending.has(id)) return;
       const value = credentialView.usage.get(id);
       if (!force && value?.checked_at && Date.now() - Date.parse(value.checked_at) < 60000) { updateUsageRow(id); return; }
       credentialView.queue.set(id, force || credentialView.queue.get(id) || false);
@@ -1631,6 +1648,7 @@
           credentialView.active--;
           updateUsageRow(id);
           pumpUsage();
+          if (!credentialView.active && !credentialView.queue.size) loadCredentialScheduling();
         });
       }
     }
@@ -1653,6 +1671,7 @@
         renderModels(models);
         resetModelForm();
         renderCredentials(credentials);
+        if (!$('credentialsPanel').hidden) loadCredentialScheduling();
         $('modelState').textContent = '';
         $('credentialState').textContent = '';
         $('settingsState').textContent = '';
@@ -1662,12 +1681,12 @@
       } catch (error) { globalError(`配置读取失败：${error.message}`); }
     }
     function setTab(name) {
-      for (const tab of ['logs', 'pin', 'config', 'scheduling']) {
+      for (const tab of ['logs', 'pin', 'credentials', 'models', 'egress', 'config']) {
         $(`${tab}Tab`).setAttribute('aria-selected', String(tab === name));
         $(`${tab}Panel`).hidden = tab !== name;
       }
-      if (name !== 'config') credentialView.queue.clear();
-      if (name === 'scheduling') loadScheduling();
+      if (name !== 'credentials') credentialView.queue.clear();
+      if (name === 'egress') loadEgress();
       else if (name !== 'logs') loadConfig();
       else loadStatistics();
     }
@@ -1675,6 +1694,8 @@
     $('logsTab').addEventListener('click', () => setTab('logs'));
     $('pinTab').addEventListener('click', () => setTab('pin'));
     $('configTab').addEventListener('click', () => setTab('config'));
+    $('credentialsTab').addEventListener('click', () => setTab('credentials'));
+    $('modelsTab').addEventListener('click', () => setTab('models'));
     $('refreshLogs').addEventListener('click', () => { loadStatus().catch((error) => globalError(error.message)); loadLogs(); loadStatistics(); });
     $('statisticsRange').addEventListener('change', () => { syncStatisticsRange(); loadStatistics(); });
     $('statisticsSegments').addEventListener('click', (event) => {
@@ -1752,7 +1773,7 @@
         $('authDialog').close();
         globalError('');
         loadStatistics();
-        if ($('logsPanel').hidden) loadConfig(); else loadLogs();
+        if (!$('egressPanel').hidden) loadEgress(); else if ($('logsPanel').hidden) loadConfig(); else loadLogs();
       } catch (error) {
         if (!authGate.paused) pauseAuth(error);
         globalError(error.message);
