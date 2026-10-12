@@ -49,6 +49,8 @@ type Service struct {
 	estimates            estimateState
 	estimateActivity     map[string]estimateActivity
 	estimateWriteError   string
+	quotaWriteErrors     map[string]string
+	quotaAppliedDisabled bool
 }
 
 func NewService() *Service {
@@ -68,6 +70,10 @@ func (s *Service) config() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.cfg
+	if c.QuotaAutoPause != nil {
+		value := *c.QuotaAutoPause
+		c.QuotaAutoPause = &value
+	}
 	if c.ReasoningMapping != nil {
 		mapping := c.ReasoningMapping.clone()
 		c.ReasoningMapping = &mapping
@@ -102,7 +108,7 @@ func atomicJSON(path string, v any) error {
 	defer os.Remove(tmp)
 	return os.Rename(tmp, path)
 }
-func (s *Service) configure(raw json.RawMessage) error {
+func (s *Service) configure(raw json.RawMessage) (err error) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 	var req struct {
@@ -130,7 +136,12 @@ func (s *Service) configure(raw json.RawMessage) error {
 		return e
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		if err == nil {
+			err = s.reconcileQuotaScheduling()
+		}
+	}()
 	if s.loaded && filepath.Clean(cfg.DataDir) != filepath.Clean(s.cfg.DataDir) {
 		return fail(409, "Changing data_dir requires restarting the plugin with its complete data directory")
 	}
@@ -278,12 +289,14 @@ func (s *Service) resolveModel(model string) (string, error) {
 	}
 	return "", fail(400, "model is not enabled in ClinePassBridge: "+model)
 }
-func authData(c Credential, filename string) any {
+func authData(c Credential, filename string, autoPause ...bool) any {
 	c.RequestScopedErrors = requestErrorRules()
 	// Metadata and stored auth JSON must agree, including after hot reload.
 	var rules []any
 	_ = json.Unmarshal(jsonBytes(c.RequestScopedErrors), &rules)
-	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
+	enabled := len(autoPause) == 0 || autoPause[0]
+	c = normalizeQuotaCredential(c)
+	return map[string]any{"Provider": Provider, "ID": routingID(c, filename), "FileName": filename, "Label": c.Label, "Disabled": c.Disabled || enabled && c.QuotaBlock != nil, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": rules}, "Attributes": map[string]string{"auth_kind": "api_key"}}
 }
 func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	var r struct {
@@ -308,8 +321,23 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 		c.Label = c.ID
 	}
 	c.RequestScopedErrors = requestErrorRules()
+	staleQuota := !quotaStateEqual(c, normalizeQuotaCredential(c))
+	c = normalizeQuotaCredential(c)
 	s.mu.Lock()
+	if current, exists := s.creds[c.ID]; exists && current.APIKey == c.APIKey && current.QuotaRevision != "" && current.QuotaRevision != c.QuotaRevision {
+		// The watcher may have read a file before a quota write (including a failed
+		// write). Keep quota-owned state while still accepting manual field edits.
+		c.QuotaBlock, c.QuotaIdentity, c.QuotaRevision = current.QuotaBlock, current.QuotaIdentity, current.QuotaRevision
+	} else if exists && current.APIKey != c.APIKey {
+		delete(s.quotaWriteErrors, c.ID)
+	}
 	s.creds[c.ID] = c
+	if staleQuota {
+		if s.quotaWriteErrors == nil {
+			s.quotaWriteErrors = map[string]string{}
+		}
+		s.quotaWriteErrors[c.ID] = "旧 Key 的额度状态待清理保存"
+	}
 	if r.FileName != "" {
 		s.authFiles[c.ID] = filepath.Base(r.FileName)
 	}
@@ -318,7 +346,7 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	}
 	s.mu.Unlock()
 	s.wakeUsageSampler()
-	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName)}, nil
+	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName, quotaAutoPauseEnabled(s.config()))}, nil
 }
 func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	var r struct{ StorageJSON []byte }
@@ -342,7 +370,7 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	if filename == "" {
 		filename = c.ID + ".json"
 	}
-	return map[string]any{"Auth": authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
+	return map[string]any{"Auth": authData(c, filename, quotaAutoPauseEnabled(s.config())), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	var c Credential
@@ -366,6 +394,13 @@ func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	s.mu.RUnlock()
 	if c.APIKey == "" || c.Disabled || revoked {
 		return c, fail(401, "Cline Pass credential is missing or disabled")
+	}
+	if quotaAutoPauseEnabled(s.config()) && normalizeQuotaCredential(c).QuotaBlock != nil {
+		var retryAt time.Time
+		if c.QuotaBlock.RetryAt != nil {
+			retryAt = *c.QuotaBlock.RetryAt
+		}
+		return c, &upstreamError{APIError: &APIError{429, "quota_blocked", quotaBlockMarker + " Cline Pass account quota exhausted; waiting for a successful usage check"}, Local: true, Scope: "account", RetryAt: retryAt}
 	}
 	return c, nil
 }
@@ -408,7 +443,11 @@ func (s *Service) credentials() []map[string]any {
 	sortCredentials(creds)
 	out := []map[string]any{}
 	for _, c := range creds {
-		out = append(out, map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled, "priority": c.Priority})
+		entry := map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled, "priority": c.Priority}
+		for key, value := range s.quotaStatus(c.ID) {
+			entry[key] = value
+		}
+		out = append(out, entry)
 	}
 	return out
 }

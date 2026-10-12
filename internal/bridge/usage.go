@@ -102,13 +102,14 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 		if r.Query.Get("refresh") == "1" {
 			ttl = 10 * time.Second
 		}
-		if entry.value.CheckedAt != nil && time.Since(*entry.value.CheckedAt) < ttl {
+		if entry.value.CheckedAt != nil && time.Since(*entry.value.CheckedAt) < ttl && !quotaRecoveryCheckDue(c, entry.value, time.Now()) {
 			value := entry.value
 			value.Estimate = s.estimateViewLocked(c, value)
 			s.mu.Unlock()
 			return value, nil
 		}
 		entry.done = make(chan struct{})
+		sampleStarted := time.Now().UTC()
 		value := entry.value
 		s.mu.Unlock()
 		var activity map[string]estimateActivity
@@ -131,8 +132,6 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 		value.CheckedAt = &now
 		s.mu.Lock()
 		entry.value = value
-		close(entry.done)
-		entry.done = nil
 		current, exists := s.creds[credentialID]
 		valid := exists && !s.revoked[credentialID] && usageFingerprint(current) == fingerprint && s.usageCache[credentialID] == entry
 		if valid {
@@ -140,6 +139,14 @@ func (s *Service) credentialUsage(r ManagementRequest) (credentialUsage, error) 
 			s.shareAccountUsageLocked(credentialID, value)
 			value.Estimate = s.estimateViewLocked(c, value)
 		}
+		s.mu.Unlock()
+		if valid {
+			_ = s.observeQuotaUsage(c, value, sampleStarted)
+		}
+		// Waiters see the usage result only once quota pause/recovery is applied.
+		s.mu.Lock()
+		close(entry.done)
+		entry.done = nil
 		s.mu.Unlock()
 		if !valid {
 			return credentialUsage{}, fail(409, "凭据已变更，请重新查询用量")

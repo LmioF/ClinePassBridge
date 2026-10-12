@@ -103,6 +103,9 @@ type Credential struct {
 	RequestScopedErrors []RequestErrorRule `json:"request_scoped_errors"`
 	ModelRevision       string             `json:"model_revision,omitempty"`
 	RoutingID           string             `json:"routing_id,omitempty"`
+	QuotaBlock          *QuotaBlock        `json:"quota_block,omitempty"`
+	QuotaIdentity       *QuotaIdentity     `json:"quota_identity,omitempty"`
+	QuotaRevision       string             `json:"quota_revision,omitempty"`
 }
 type RequestErrorRule struct {
 	Status int      `json:"status"`
@@ -114,6 +117,7 @@ func requestErrorRules() []RequestErrorRule {
 	return []RequestErrorRule{
 		{Status: 500, Match: []string{"empty response content"}, Action: "stop"},
 		{Status: 429, Match: []string{rateLimitMarker}, Action: "stop"},
+		{Status: 429, Match: []string{quotaBlockMarker}, Action: "continue"},
 	}
 }
 
@@ -124,6 +128,7 @@ type Model struct {
 	Providers        []string                `json:"providers" yaml:"providers"`
 }
 type Config struct {
+	QuotaAutoPause   *bool                   `json:"quota_auto_pause,omitempty" yaml:"quota_auto_pause,omitempty"`
 	ReasoningMapping *ReasoningMappingConfig `json:"reasoning_mapping,omitempty" yaml:"reasoning_mapping,omitempty"` // Legacy global mapping; migrated during validation.
 	DataDir          string                  `json:"data_dir" yaml:"data_dir"`
 	BaseURL          string                  `json:"base_url" yaml:"base_url"`

@@ -67,10 +67,10 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 	groups := map[string]string{}
 	for _, id := range ids {
 		c := s.creds[id]
-		group := "key:" + estimateKeyID(c)
+		group := "credential:" + id
 		entry := s.usageCache[id]
-		if entry != nil && entry.fingerprint == usageFingerprint(c) && entry.value.accountHash != "" {
-			group = "account:" + entry.value.accountHash
+		if account := s.quotaAccountHashLocked(c); account != "" {
+			group = "account:" + account
 		}
 		chosen, exists := groups[group]
 		if !exists {
@@ -87,7 +87,7 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 	for _, id := range groups {
 		entry := s.usageCache[id]
 		if entry != nil && entry.fingerprint == usageFingerprint(s.creds[id]) {
-			if entry.done != nil || entry.value.CheckedAt != nil && now.Sub(*entry.value.CheckedAt) < backgroundUsageTTL(entry.value) {
+			if entry.done != nil || entry.value.CheckedAt != nil && now.Sub(*entry.value.CheckedAt) < backgroundUsageTTL(entry.value) && !quotaRecoveryCheckDue(s.creds[id], entry.value, now) {
 				continue
 			}
 		}
@@ -98,6 +98,9 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 }
 
 func (s *Service) sampleUsage() {
+	// Filesystem failures retain the in-memory block and retry without requiring
+	// an operator or a new upstream rejection. This never calls host.auth.save.
+	_ = s.reconcileQuotaScheduling()
 	jobs := make(chan string)
 	var workers sync.WaitGroup
 	for n := 0; n < cap(s.usageSlots); n++ {

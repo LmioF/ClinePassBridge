@@ -85,6 +85,10 @@ func (s *Service) saveCredential(c Credential) error {
 	current, filename, dir := s.creds[c.ID], s.authFiles[c.ID], s.authDir
 	s.mu.RUnlock()
 	c.RequestScopedErrors = requestErrorRules()
+	c = normalizeQuotaCredential(c)
+	if current.APIKey != c.APIKey {
+		c.QuotaRevision = ""
+	}
 	body := json.RawMessage(jsonBytes(c))
 	if current.RoutingID != "" || (dir != "" && filename != "") {
 		file, err := s.affinityFile(current)
@@ -93,20 +97,18 @@ func (s *Service) saveCredential(c Credential) error {
 		}
 		var fields map[string]json.RawMessage
 		_ = json.Unmarshal(jsonBytes(c), &fields)
-		for _, key := range []string{"priority", "proxy_url", "model_revision", "routing_id"} {
+		for _, key := range []string{"priority", "proxy_url", "model_revision", "routing_id", "quota_block", "quota_identity", "quota_revision"} {
 			delete(file.updated, key)
 		}
 		for key, value := range fields {
 			file.updated[key] = value
 		}
 		body = json.RawMessage(jsonBytes(file.updated))
-		if current.RoutingID != "" {
-			if err := atomicJSON(file.path, file.updated); err != nil {
-				return err
-			}
+		if err := atomicJSON(file.path, file.updated); err != nil {
+			return err
 		}
 	}
-	if current.RoutingID == "" {
+	if current.RoutingID == "" && (dir == "" || filename == "") {
 		if filename == "" {
 			filename = c.ID + ".json"
 		}
@@ -115,6 +117,9 @@ func (s *Service) saveCredential(c Credential) error {
 		}
 	}
 	s.mu.Lock()
+	if current.APIKey != c.APIKey {
+		delete(s.quotaWriteErrors, c.ID)
+	}
 	s.creds[c.ID] = c
 	s.mu.Unlock()
 	return nil

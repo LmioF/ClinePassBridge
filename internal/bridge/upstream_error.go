@@ -33,6 +33,8 @@ type upstreamError struct {
 	WindowID       string
 	Provider       string
 	ProviderSource string
+	QuotaType      string
+	QuotaResetAt   *time.Time
 }
 
 // responseRoutingProvider recovers the provider from explicit routing metadata.
@@ -87,9 +89,8 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 		}
 	}
 	team := strings.Contains(lower, "this team's limit") && strings.Contains(lower, "tokens per minute")
-	quota := !team && (strings.Contains(code, "insufficient_quota") || strings.Contains(code, "quota_exceeded") ||
-		strings.Contains(lower, "quota exhausted") || strings.Contains(lower, "quota exceeded") ||
-		strings.Contains(lower, "insufficient credits") || strings.Contains(lower, "insufficient balance"))
+	quotaType := quotaErrorType(code, message)
+	quota := !team && quotaType != "" && status != 401 && status != 403
 	rate := !quota && (status == 429 || strings.Contains(code, "rate_limit_exceeded") || wrappedRateLimit.MatchString(message))
 	// An actual authentication response must never become an exempt rate limit.
 	if status == 401 || status == 403 {
@@ -110,6 +111,8 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 		}
 	case quota:
 		kind = "upstream_quota_exhausted"
+		result.Scope, result.QuotaType = "account", quotaType
+		result.QuotaResetAt = quotaResetTime(headers, message, now)
 	case status == 401 || status == 403:
 		kind = "upstream_auth_error"
 	}
