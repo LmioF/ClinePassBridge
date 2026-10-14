@@ -662,7 +662,7 @@ index 00000000..4bec7fa4
 +	}
 +}
 diff --git a/internal/pluginhost/rpc_client.go b/internal/pluginhost/rpc_client.go
-index 96e3785d..ef88fd20 100644
+index 96e3785d..106265da 100644
 --- a/internal/pluginhost/rpc_client.go
 +++ b/internal/pluginhost/rpc_client.go
 @@ -57,6 +57,21 @@ func (e rpcError) StatusCode() int {
@@ -677,7 +677,7 @@ index 96e3785d..ef88fd20 100644
 +		return false
 +	}
 +	switch e.Code {
-+	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, requestCanceledCode, requestDeadlineCode:
++	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, upstreamStreamIdleTimeoutCode, requestCanceledCode, requestDeadlineCode:
 +		return true
 +	default:
 +		return false
@@ -766,10 +766,10 @@ index 33a7a459..e85cbd02 100644
  }
 diff --git a/internal/pluginhost/stream_errors.go b/internal/pluginhost/stream_errors.go
 new file mode 100644
-index 00000000..b5a69710
+index 00000000..628584e6
 --- /dev/null
 +++ b/internal/pluginhost/stream_errors.go
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +package pluginhost
 +
 +import (
@@ -784,6 +784,7 @@ index 00000000..b5a69710
 +const (
 +	upstreamTransportIncompleteCode = "upstream_transport_incomplete"
 +	upstreamNetworkErrorCode        = "upstream_network_error"
++	upstreamStreamIdleTimeoutCode   = "upstream_stream_idle_timeout"
 +	requestCanceledCode             = "request_canceled"
 +	requestDeadlineCode             = "request_deadline_exceeded"
 +)
@@ -830,7 +831,7 @@ index 00000000..b5a69710
 +		return true
 +	}
 +	switch e.details.Code {
-+	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, requestCanceledCode, requestDeadlineCode:
++	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, upstreamStreamIdleTimeoutCode, requestCanceledCode, requestDeadlineCode:
 +		return true
 +	default:
 +		return false
@@ -855,10 +856,10 @@ index 00000000..b5a69710
 +}
 diff --git a/internal/pluginhost/stream_errors_test.go b/internal/pluginhost/stream_errors_test.go
 new file mode 100644
-index 00000000..7ae95838
+index 00000000..eba5134d
 --- /dev/null
 +++ b/internal/pluginhost/stream_errors_test.go
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,242 @@
 +package pluginhost
 +
 +import (
@@ -948,6 +949,7 @@ index 00000000..7ae95838
 +		{name: "local_cancellation", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 499, Code: requestCanceledCode, Scope: "request"}},
 +		{name: "local_deadline", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 504, Code: requestDeadlineCode, Scope: "request"}},
 +		{name: "network_callback", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: upstreamNetworkErrorCode, Scope: "request"}},
++		{name: "stream_idle_cutoff", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: upstreamStreamIdleTimeoutCode, Scope: "request"}},
 +		{name: "explicit_request_scope", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: "request_fault", RequestScoped: true}},
 +		{name: "ordinary_502", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: "upstream_error"}, penalty: true},
 +		{name: "ordinary_504", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 504, Code: "upstream_error"}, penalty: true},
@@ -1027,6 +1029,7 @@ index 00000000..7ae95838
 +		{name: "classified_incomplete", code: upstreamTransportIncompleteCode, status: 502, calls: 1},
 +		{name: "local_cancellation", code: requestCanceledCode, status: 499, calls: 1},
 +		{name: "local_deadline", code: requestDeadlineCode, status: 504, calls: 1},
++		{name: "stream_idle_cutoff", code: upstreamStreamIdleTimeoutCode, status: 502, calls: 1},
 +		{name: "ordinary_502", code: "upstream_error", status: 502, calls: 2},
 +		{name: "ordinary_504", code: "upstream_error", status: 504, calls: 2},
 +		{name: "ordinary_401", code: "upstream_auth_error", status: 401, calls: 2},
@@ -1070,7 +1073,7 @@ index 00000000..7ae95838
 +}
 +
 +func TestPluginRequestFaultHintsPreserveCredentialStatusCooldown(t *testing.T) {
-+	for _, code := range []string{requestCanceledCode, requestDeadlineCode, upstreamTransportIncompleteCode, upstreamNetworkErrorCode} {
++	for _, code := range []string{requestCanceledCode, requestDeadlineCode, upstreamTransportIncompleteCode, upstreamNetworkErrorCode, upstreamStreamIdleTimeoutCode} {
 +		for _, status := range []int{401, 402, 403, 429} {
 +			t.Run(code+"/"+http.StatusText(status), func(t *testing.T) {
 +				const message = "synthetic credential failure"

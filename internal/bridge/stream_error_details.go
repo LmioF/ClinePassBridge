@@ -59,12 +59,12 @@ func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error)
 	}
 }
 
-// A truncated provider response does not prove team-limit recovery and must
+// A truncated or idle provider response does not prove team-limit recovery and must
 // not add the ordinary failed-probe five-second retreat. Retain any existing
 // window, release its probe slot, and leave its original deadline unchanged.
 func finishRequestRateLease(lease *rateLease, err error) {
 	var upstream *upstreamError
-	if lease == nil || !errors.As(err, &upstream) || upstream.Kind != transportIncompleteKind {
+	if lease == nil || !errors.As(err, &upstream) || (upstream.Kind != transportIncompleteKind && upstream.Kind != upstreamStreamIdleTimeoutKind) {
 		lease.finish(err)
 		return
 	}

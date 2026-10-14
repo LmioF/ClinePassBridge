@@ -403,11 +403,20 @@ func observeMetadata(j map[string]any, entry *LogEntry, attempt *Attempt) {
 func contentStarted(j map[string]any) bool {
 	for _, ch := range list(j["choices"]) {
 		d := object(object(ch)["delta"])
-		if str(d["content"]) != "" || str(d["reasoning_content"]) != "" || str(d["reasoning"]) != "" || len(list(d["tool_calls"])) > 0 {
+		if str(d["content"]) != "" || str(d["reasoning_content"]) != "" || str(d["reasoning"]) != "" || str(d["refusal"]) != "" || effectiveFunctionDelta(object(d["function_call"])) {
 			return true
+		}
+		for _, tool := range list(d["tool_calls"]) {
+			if effectiveFunctionDelta(object(object(tool)["function"])) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func effectiveFunctionDelta(function map[string]any) bool {
+	return str(function["name"]) != "" || str(function["arguments"]) != ""
 }
 func isEmptyError(err error) bool {
 	var upstream *upstreamError

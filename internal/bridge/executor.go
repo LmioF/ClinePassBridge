@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -211,21 +210,19 @@ func (s *Service) closeUpstream(id string) {
 	}
 }
 func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
+	return s.readWatched(up, fn, s.newStreamReadWatchdog(up, 0))
+}
+
+func (s *Service) readWatched(up upstreamStream, fn func([]byte) error, watchdog *streamReadWatchdog) (err error) {
 	cfg := s.config()
-	var timedOut bool
-	var mu sync.Mutex
-	deadline := up.deadline
-	if deadline.IsZero() {
-		deadline = time.Now().Add(time.Duration(cfg.TimeoutSeconds) * time.Second)
-	}
-	timerDone := make(chan struct{})
-	timer := time.AfterFunc(time.Until(deadline), func() { defer close(timerDone); mu.Lock(); timedOut = true; mu.Unlock(); s.closeUpstream(up.StreamID) })
+	go watchdog.run()
 	defer func() {
-		if !timer.Stop() {
-			<-timerDone
+		watchdog.stop()
+		if err == nil {
+			err = watchdog.failure()
 		}
+		watchdog.close()
 	}()
-	defer s.closeUpstream(up.StreamID)
 	total := 0
 	for {
 		var chunk readChunk
@@ -235,11 +232,8 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 		} else {
 			e = s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID, "host_callback_id": up.callbackID, "error_details_supported": true}, &chunk)
 		}
-		mu.Lock()
-		timeout := timedOut
-		mu.Unlock()
-		if timeout {
-			return requestTimedOut("Cline upstream request timed out")
+		if failure := watchdog.failure(); failure != nil {
+			return failure
 		}
 		total += len(chunk.Payload)
 		up.diagnostics.capture(chunk.Payload)
@@ -247,9 +241,12 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 			return fail(502, "upstream response exceeds configured limit")
 		}
 		if len(chunk.Payload) > 0 {
-			if e = fn(chunk.Payload); e != nil {
-				return e
+			if callbackErr := fn(chunk.Payload); callbackErr != nil {
+				return callbackErr
 			}
+		}
+		if failure := watchdog.failure(); failure != nil {
+			return failure
 		}
 		if e != nil || chunk.Error != "" || chunk.ErrorDetails != nil {
 			if e == nil && chunk.Error != "" {
@@ -385,9 +382,18 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 		cp.expectedChoices = expectedChoices[0]
 	}
 	decoder := SSEDecoder{max: s.config().MaxResponseBytes}
-	e := s.read(us, func(b []byte) error {
+	var idleTimeout time.Duration
+	if cfg := s.config(); cfg.StreamIdleCutoffEnabled {
+		idleTimeout = time.Duration(cfg.StreamIdleTimeoutSeconds) * time.Second
+	}
+	watchdog := s.newStreamReadWatchdog(us, idleTimeout)
+	e := s.readWatched(us, func(b []byte) error {
 		return decoder.Feed(b, func(payload []byte, event string) error {
-			if strings.TrimSpace(string(payload)) == "[DONE]" {
+			text := strings.TrimSpace(string(payload))
+			if text == "" {
+				return nil
+			}
+			if text == "[DONE]" {
 				cp.done = true
 				if !cp.allFinished() {
 					return fail(502, "upstream stream ended without finish_reason")
@@ -407,6 +413,9 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			observeMetadata(j, entry, attempt)
 			cp.observe(j)
 			if contentStarted(j) {
+				if err := watchdog.effectiveOutput(); err != nil {
+					return err
+				}
 				if entry.EffectiveFrameCount == 0 {
 					entry.TTFTMS = time.Since(start).Milliseconds()
 				}
@@ -420,7 +429,11 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			}
 			return nil
 		})
-	})
+	}, watchdog)
+	var upstream *upstreamError
+	if errors.As(e, &upstream) && upstream.Kind == upstreamStreamIdleTimeoutKind {
+		entry.StreamEnd = "idle_timeout"
+	}
 	if errors.Is(e, errStreamDone) {
 		e = nil
 	}
@@ -567,8 +580,7 @@ func startsCompletion(frame map[string]any) bool {
 	}
 	for _, raw := range list(frame["choices"]) {
 		choice := object(raw)
-		delta := object(choice["delta"])
-		if str(delta["refusal"]) != "" || len(object(delta["function_call"])) > 0 || str(choice["finish_reason"]) != "" {
+		if str(choice["finish_reason"]) != "" {
 			return true
 		}
 	}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.1"
+const Version = "0.3.2"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -138,6 +138,8 @@ type Config struct {
 	Models                   []Model                 `json:"models" yaml:"models"`
 	NonstreamMode            string                  `json:"nonstream_mode" yaml:"nonstream_mode"`
 	ClientRetryCompatibility bool                    `json:"client_retry_compatibility" yaml:"client_retry_compatibility"`
+	StreamIdleCutoffEnabled  bool                    `json:"stream_idle_cutoff_enabled" yaml:"stream_idle_cutoff_enabled"`
+	StreamIdleTimeoutSeconds int                     `json:"stream_idle_timeout_seconds" yaml:"stream_idle_timeout_seconds"`
 	ProviderPolicy           string                  `json:"provider_policy" yaml:"provider_policy"`
 	TimeoutSeconds           int                     `json:"timeout_seconds" yaml:"timeout_seconds"`
 	LogRetention             int                     `json:"log_retention" yaml:"log_retention"`
@@ -145,7 +147,7 @@ type Config struct {
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 16 << 20}
+	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: true, StreamIdleTimeoutSeconds: 10, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 16 << 20}
 }
 
 // Scalar settings support partial updates, but supplied collections replace the
@@ -184,6 +186,9 @@ func (c *Config) validate() error {
 	}
 	if c.TimeoutSeconds < 10 || c.TimeoutSeconds > 1800 {
 		return fail(400, "timeout_seconds must be between 10 and 1800")
+	}
+	if c.StreamIdleTimeoutSeconds < 1 || c.StreamIdleTimeoutSeconds > 1800 {
+		return fail(400, "stream_idle_timeout_seconds must be between 1 and 1800")
 	}
 	if c.LogRetention < 50 || c.LogRetention > 10000 {
 		return fail(400, "log_retention must be between 50 and 10000")

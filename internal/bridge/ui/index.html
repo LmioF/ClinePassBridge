@@ -182,12 +182,11 @@
     .effort-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
     .reasoning-badge { white-space: normal; overflow-wrap: anywhere; }
     .auth-panel { grid-column: 1 / -1; }
+    .config-side { display: grid; gap: 24px; min-width: 0; }
     .auth-panel .panel-hint { max-width: 880px; }
     .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }
     .request-settings-head { flex-wrap: wrap; }
-    .request-settings-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-    .retry-compat-control { display: flex; align-items: center; gap: 4px; }
-    .retry-compat-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+    .retry-compat-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; font-size: 13px; }
     .retry-compat-switch input { appearance: none; width: 30px; height: 18px; border: 1px solid var(--line); border-radius: 20px; background: var(--inset-bg); cursor: pointer; position: relative; margin: 0; flex-shrink: 0; }
     .retry-compat-switch input::before { content: ''; position: absolute; width: 12px; height: 12px; top: 2px; left: 2px; border-radius: 50%; background: var(--muted); transition: transform 120ms ease; }
     .retry-compat-switch input:checked { background: var(--accent); border-color: var(--accent); }
@@ -196,8 +195,8 @@
     .retry-info-button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; padding: 5px; }
     .retry-info-button:hover { background: var(--inset-bg); color: var(--ink); }
     .retry-info-button svg { width: 18px; height: 18px; }
-    #retryCompatibilityDialog { width: min(440px, calc(100vw - 32px)); }
-    #retryCompatibilityDialog p { color: var(--muted); line-height: 1.8; margin: 0 0 12px; }
+    #retryCompatibilityDialog, #streamIdleDialog { width: min(440px, calc(100vw - 32px)); }
+    #retryCompatibilityDialog p, #streamIdleDialog p { color: var(--muted); line-height: 1.8; margin: 0 0 12px; }
     @media (prefers-reduced-motion: reduce) { .retry-compat-switch input::before { transition: none; } }
     .panel-hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .model-row { justify-content: space-between; border-radius: 8px; background: var(--inset-bg); padding: 14px; min-width: 0; }
@@ -613,13 +612,7 @@
         <div class="panel">
           <div class="panel-head request-settings-head">
             <div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div>
-            <div class="request-settings-actions">
-              <div class="retry-compat-control">
-                <label class="retry-compat-switch" for="clientRetryCompatibility"><span>重试兼容</span><input id="clientRetryCompatibility" type="checkbox" role="switch" form="settingsForm" checked></label>
-                <button class="retry-info-button" id="openRetryCompatibilityHelp" type="button" aria-label="重试兼容说明" aria-haspopup="dialog" aria-controls="retryCompatibilityDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".8" fill="currentColor" stroke="none"/></svg></button>
-              </div>
-              <button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button>
-            </div>
+            <button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button>
           </div>
           <form class="form-stack" id="settingsForm">
             <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
@@ -628,6 +621,37 @@
             <div class="form-foot"><button class="button primary" id="saveSettings" type="submit">保存设置</button></div>
           </form>
           <p class="inline-state" id="settingsState"></p>
+        </div>
+        <div class="config-side">
+          <div class="panel" id="retryCompatibilityPanel">
+            <div class="panel-head">
+              <h2 id="retryCompatibilityHeading">重试兼容</h2>
+              <button class="retry-info-button" id="openRetryCompatibilityHelp" type="button" aria-label="重试兼容说明" aria-haspopup="dialog" aria-controls="retryCompatibilityDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".8" fill="currentColor" stroke="none"/></svg></button>
+            </div>
+            <form class="form-stack" id="retryCompatibilityForm" aria-labelledby="retryCompatibilityHeading">
+              <div class="field">
+                <label class="retry-compat-switch" for="clientRetryCompatibility"><span>启用重试兼容</span><input id="clientRetryCompatibility" type="checkbox" role="switch" checked></label>
+                <div class="panel-hint">默认开启</div>
+              </div>
+              <div class="form-foot"><button class="button primary" id="saveRetryCompatibility" type="submit">保存设置</button></div>
+            </form>
+            <p class="inline-state" id="retryCompatibilityState" role="status"></p>
+          </div>
+          <div class="panel" id="streamIdlePanel">
+            <div class="panel-head">
+              <h2 id="streamIdleHeading">流式卡住时提前截流</h2>
+              <button class="retry-info-button" id="openStreamIdleHelp" type="button" aria-label="流式卡住时提前截流说明" aria-haspopup="dialog" aria-controls="streamIdleDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".8" fill="currentColor" stroke="none"/></svg></button>
+            </div>
+            <form class="form-stack" id="streamIdleForm" aria-labelledby="streamIdleHeading">
+              <div class="field">
+                <label class="retry-compat-switch" for="streamIdleCutoffEnabled"><span>启用提前截流</span><input id="streamIdleCutoffEnabled" type="checkbox" role="switch" checked></label>
+                <div class="panel-hint">默认开启</div>
+              </div>
+              <div class="field"><label for="streamIdleTimeoutSeconds">无新输出等待时间（秒）</label><input class="control" id="streamIdleTimeoutSeconds" type="number" min="1" max="1800" step="1" value="10" required></div>
+              <div class="form-foot"><button class="button primary" id="saveStreamIdle" type="submit">保存设置</button></div>
+            </form>
+            <p class="inline-state" id="streamIdleState" role="status"></p>
+          </div>
         </div>
         <div class="panel auth-panel">
           <div class="panel-head"><div><h2>管理鉴权（兜底）</h2><p class="panel-hint">用于读取日志和修改插件配置。优先复用同源 CPA / CPAMP 保存的登录；鉴权失败时可输入当前管理入口的密钥。</p></div></div>
@@ -642,6 +666,14 @@
     <p>将 Fireworks / LiteLLM 的响应截断错误返回为干净的 502，避免原版 DSH 等客户端被报错中的嵌套 400 误导，便于自动重试。</p>
     <p>默认开启。关闭后返回原始报错；完整错误始终保留在请求日志中。是否重试及重试次数由客户端决定。</p>
     <p>调整后点击「保存设置」生效。</p>
+  </dialog>
+
+  <dialog id="streamIdleDialog" aria-labelledby="streamIdleTitle">
+    <div class="panel-head"><h2 id="streamIdleTitle">流式卡住时提前截流</h2><button class="button compact" id="closeStreamIdleHelp" type="button" autofocus>关闭</button></div>
+    <p>收到首段有效输出后，如果连续达到设定时间没有新输出，就主动截断当前流并报告 502 错误，让客户端尽快进入自己的重试流程。</p>
+    <p>思考内容、正文和工具调用的有效增量都会重新计时；心跳和空帧不算新输出。等待首段输出时仍使用请求总时长上限。</p>
+    <p>默认开启，等待 10 秒，可设为 1–1800 秒。适用于所有上游流式回复，正常回复中的长暂停也会触发。关闭后仍保留请求总时长上限。</p>
+    <p>点击本栏「保存设置」后对后续请求生效。截流详情会保留在请求日志中，是否重试及重试次数由客户端决定。</p>
   </dialog>
 
   <dialog id="egressGuideDialog" aria-labelledby="egressGuideTitle">
@@ -1148,9 +1180,10 @@
       const teamLimited = log.error_kind === 'upstream_team_rate_limited';
       const limited = teamLimited || log.error_kind === 'upstream_rate_limited';
       const incomplete = log.error_kind === 'upstream_transport_incomplete';
+      const idleCutoff = log.error_kind === 'upstream_stream_idle_timeout';
       const remaining = Math.max(0, Math.ceil((Date.parse(log.retry_at) - Date.now()) / 1000));
       const limitName = teamLimited ? '上游团队限流' : '请求限流';
-      const limitLabel = limited ? (remaining > 0 ? `${limitName}，${remaining} 秒后可重试` : limitName) : incomplete ? `上游响应截断 · ${logCooldownText(log)}` : '';
+      const limitLabel = limited ? (remaining > 0 ? `${limitName}，${remaining} 秒后可重试` : limitName) : incomplete ? `上游响应截断 · ${logCooldownText(log)}` : idleCutoff ? `流式卡住时提前截流 · ${logCooldownText(log)}` : '';
       const actual = shown(actualProvider(log.provider, log.upstream_skipped), '未知');
       const credential = present(log.credential) ? log.credential : present(log.credential_id) ? log.credential_id : '—';
       const attempts = !local && Array.isArray(log.attempts) ? log.attempts.filter((attempt) => attempt.upstream_skipped !== true) : [];
@@ -1166,7 +1199,7 @@
         <div class="cell"><span class="cell-label">时间</span><div class="primary-text mono">${local ? '首 ' : ''}${formatTime(log.time)}</div>${local ? `<div class="subtext mono">末 ${formatTime(lastTime)}</div>` : ''}</div>
         <div class="cell log-model"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono" title="${esc(log.model || '')}">${shown(log.model)}</div><div class="subtext mono" title="${esc(log.upstream_model || '')}">${shown(log.upstream_model)}</div></div>
         <div class="cell"><span class="cell-label">思考强度</span><span class="badge reasoning-badge" title="${log.reasoning_mapping ? (local ? '映射已计算；本次被本地退避拦截，未发往上游' : '插件收到的强度 → 发往上游的强度') : '未应用插件映射；— 表示未识别到显式强度'}">${esc(reasoningText(log))}</span></div>
-        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : incomplete ? '响应截断' : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
+        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : incomplete ? '响应截断' : idleCutoff ? '卡住截流' : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
         <div class="cell"><span class="cell-label">凭据</span><div class="primary-text truncate" title="${esc(credential)}">${esc(credential)}</div></div>
         <div class="cell"><span class="cell-label">实际上游</span><div class="primary-text truncate" title="${actual}">${actual}</div></div>
         <div class="cell"><span class="cell-label">首字 / 耗时</span><div class="log-latency">${latencyLine('首字', log.ttft_ms, 'ttft', local, log.completion_tokens)}${latencyLine('耗时', log.duration_ms, 'duration', local, log.completion_tokens)}</div></div>
@@ -1828,6 +1861,8 @@
         $('nonstreamMode').value = ['native', 'native-fallback', 'stream-aggregate'].includes(config?.nonstream_mode) ? config.nonstream_mode : 'stream-aggregate';
         dropdowns.get('nonstreamMode').sync();
         $('clientRetryCompatibility').checked = config?.client_retry_compatibility !== false;
+        $('streamIdleCutoffEnabled').checked = config?.stream_idle_cutoff_enabled !== false;
+        $('streamIdleTimeoutSeconds').value = present(config?.stream_idle_timeout_seconds) ? config.stream_idle_timeout_seconds : 10;
         $('providerPolicy').value = config?.provider_policy === 'client' ? 'client' : 'config';
         dropdowns.get('providerPolicy').sync();
         $('timeoutSeconds').value = present(config?.timeout_seconds) ? config.timeout_seconds : 600;
@@ -1839,6 +1874,8 @@
         $('modelState').textContent = '';
         $('credentialState').textContent = '';
         $('settingsState').textContent = '';
+        $('retryCompatibilityState').textContent = '';
+        $('streamIdleState').textContent = '';
         $('providerPolicyState').textContent = '';
         $('pinModelsState').textContent = '';
         globalError('');
@@ -1857,6 +1894,8 @@
     $('openPinEvidence').addEventListener('click', () => $('pinEvidenceDialog').showModal());
     $('openRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').showModal());
     $('closeRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').close());
+    $('openStreamIdleHelp').addEventListener('click', () => $('streamIdleDialog').showModal());
+    $('closeStreamIdleHelp').addEventListener('click', () => $('streamIdleDialog').close());
     $('logsTab').addEventListener('click', () => setTab('logs'));
     $('pinTab').addEventListener('click', () => setTab('pin'));
     $('configTab').addEventListener('click', () => setTab('config'));
@@ -2232,12 +2271,35 @@
         $('settingsState').textContent = '超时需为 10–1800 秒，日志保留需为 50–10000 条';
         return;
       }
-      const next = { nonstream_mode: $('nonstreamMode').value, client_retry_compatibility: $('clientRetryCompatibility').checked, timeout_seconds, log_retention };
+      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention };
       $('saveSettings').disabled = true;
       $('settingsState').textContent = '正在保存…';
       try { state.config = await api('/config', { method: 'PUT', body: next }); $('settingsState').textContent = '设置已保存'; }
       catch (error) { $('settingsState').textContent = `保存失败：${error.message}`; }
       finally { $('saveSettings').disabled = false; }
+    });
+    $('retryCompatibilityForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const next = { client_retry_compatibility: $('clientRetryCompatibility').checked };
+      $('saveRetryCompatibility').disabled = true;
+      $('retryCompatibilityState').textContent = '正在保存…';
+      try { state.config = await api('/config', { method: 'PUT', body: next }); $('retryCompatibilityState').textContent = '设置已保存'; }
+      catch (error) { $('retryCompatibilityState').textContent = `保存失败：${error.message}`; }
+      finally { $('saveRetryCompatibility').disabled = false; }
+    });
+    $('streamIdleForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const stream_idle_timeout_seconds = Number($('streamIdleTimeoutSeconds').value);
+      if (!Number.isInteger(stream_idle_timeout_seconds) || stream_idle_timeout_seconds < 1 || stream_idle_timeout_seconds > 1800) {
+        $('streamIdleState').textContent = '等待时间需为 1–1800 秒的整数';
+        return;
+      }
+      const next = { stream_idle_cutoff_enabled: $('streamIdleCutoffEnabled').checked, stream_idle_timeout_seconds };
+      $('saveStreamIdle').disabled = true;
+      $('streamIdleState').textContent = '正在保存…';
+      try { state.config = await api('/config', { method: 'PUT', body: next }); $('streamIdleState').textContent = '设置已保存'; }
+      catch (error) { $('streamIdleState').textContent = `保存失败：${error.message}`; }
+      finally { $('saveStreamIdle').disabled = false; }
     });
     function openCredentialDialog(id = '', label = '') {
       state.editingCredentialId = id;

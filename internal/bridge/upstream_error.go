@@ -13,6 +13,14 @@ import (
 
 const rateLimitMarker = "[clinepassbridge:team_tpm_limit]"
 const transportIncompleteKind = "upstream_transport_incomplete"
+const upstreamStreamIdleTimeoutKind = "upstream_stream_idle_timeout"
+
+func streamIdleTimeout(timeout time.Duration) error {
+	return &upstreamError{
+		APIError: &APIError{Status: 502, Kind: upstreamStreamIdleTimeoutKind, Message: fmt.Sprintf("HTTP 502: upstream response stream idle for %gs after effective output (%s)", timeout.Seconds(), upstreamStreamIdleTimeoutKind)},
+		Scope:    "request",
+	}
+}
 
 var wrappedRateLimit = regexp.MustCompile(`(?is)request failed with status 429:\s*.*rate limit exceeded`)
 var retrySecondsPattern = regexp.MustCompile(`(?i)retry after\s+(\d+(?:\.\d+)?)\s*s\b`)
@@ -43,7 +51,7 @@ func (e *upstreamError) IsRequestScoped() bool {
 		return false
 	}
 	switch e.Kind {
-	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind:
+	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind, upstreamStreamIdleTimeoutKind:
 		return true
 	default:
 		return false
