@@ -210,12 +210,6 @@ jobs:
           pattern: package-*
           merge-multiple: true
           path: dist
-      - name: Package companion CPA source patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          zip -j "dist/clinepassbridge_${{ needs.metadata.outputs.version }}_cpa_compatibility.zip" \
-            docs/cpa-compatibility.md compatibility/cpa-v8.0.13-stream-errors.patch
       - name: Verify all release archives and write checksums
         shell: bash
         run: |

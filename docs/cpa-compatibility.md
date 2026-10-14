@@ -1,46 +1,35 @@
-# CPA 宿主兼容
+# CPA 兼容性说明
 
-ClinePassBridge 保持 JSON ABI v1，旧 CPA 仍可加载插件。默认开启的「重试兼容」可把指定 Fireworks/LiteLLM 响应截断返回为干净的 502，供原版 DSH 等客户端采用已有重试策略。
+ClinePassBridge 使用 JSON ABI v1，按 [README](../README.md#安装与配置) 安装到支持动态库插件的原版 CPA。插件功能以原版接口为边界，升级时备份插件目录、CPA 凭据目录与插件数据目录即可。
 
-完整的请求级免冷却、流式空闲截流、网络回调分类和模型冷却范围显示，还需要宿主支持以下扩展：
+## 原版接口与提前截流
 
-| 能力 | 宿主扩展 |
-| --- | --- |
-| 输出前后的请求级错误 | RPC 错误分类、`host.stream.close.error_details` / `host.stream.emit.error_details` |
-| 流式空闲截流 | `host.http.stream_close` 主动结束上游，宿主识别空闲超时的请求级 502 并免账号和模型冷却 |
-| 网络故障、取消和截止时间 | `host.http.do_stream` / `host.http.stream_read` 的可选 `error_details` |
-| 模型冷却范围 | `host.auth.list` 返回 `model_states_available` / `model_states` |
+原版 CPA **v8.0.13** 已提供 `host.http.stream_close`，插件可主动关闭上游流。「流式卡住时提前截流」从 v0.3.2 起提供，可在原版宿主上独立使用。
 
-升级插件不会自动升级 CPA。旧宿主缺少这些扩展时，账号冷却仍取决于旧策略；日志中的 `legacy_host_unknown` 表示宿主未确认结构化流错误支持。
+默认开启、空闲阈值 10 秒，从首段有效输出后计时；思考、正文和工具增量重置计时，heartbeat、role 和空帧不重置。适用于上游 SSE 请求，包括非流式聚合；原生非流式不适用，也不缩短首字等待。配置见 [进阶配置](configuration.md#流式卡住时提前截流)。
 
-## 配套补丁
+统一错误规则使用原版 CPA 的 `request_scoped_errors`。已有凭据中的该字段继续保留；显式保存统一规则时按所保存规则更新。
 
-Release 提供 `clinepassbridge_0.3.2_cpa_compatibility.zip`，包含本文和 `cpa-v8.0.13-stream-errors.patch`。仓库中的补丁位于 `compatibility/`。
+## 错误状态与客户端重试
 
-「流式卡住时提前截流」从 v0.3.2 起提供。空闲超时免冷却需要本版配套宿主源码补丁；v0.3.1 兼容包尚未识别该错误类别。
+「重试兼容」默认开启，将指定 Fireworks/LiteLLM 响应截断规范为：
 
-补丁基于官方 CLIProxyAPI **v8.0.13**，准确提交为 `d7914afdedca7af95ee974a42453dc49fc1388ce`，包含所需宿主源码和回归测试。它不包含本地独立的 payload 定制。其他 CPA 版本需先检查补丁适用性，本次未验证其他版本。
-
-在单独的源码目录应用并构建（Go 1.26，Linux 动态库需 CGO / GCC）：
-
-```bash
-git clone https://github.com/router-for-me/CLIProxyAPI.git
-cd CLIProxyAPI
-git checkout d7914afdedca7af95ee974a42453dc49fc1388ce
-# 将下载包解压后的 patch 放在此目录，再执行：
-git apply --check cpa-v8.0.13-stream-errors.patch
-git apply cpa-v8.0.13-stream-errors.patch
-go test ./internal/pluginhost ./sdk/pluginapi
-CGO_ENABLED=1 go build -trimpath -o CLIProxyAPI ./cmd/server
+```text
+HTTP 502: upstream response stream ended before completion (upstream_transport_incomplete)
 ```
 
-将构建后的 CPA 与对应版本的插件一起升级，沿用已有配置和持久化目录。部署前备份 CPA 二进制、插件动态库与数据；回滚时恢复对应宿主和插件。已有独立定制应在自己的源码分支保留并处理补丁冲突。
+这是错误文案。原版 CPA 的流错误接口只传字符串，按默认 **500** 封装错误；若下游已经开始 **HTTP 200**，响应状态保持 200，通过 SSE error 结束流，不补正常完成帧。提前截流也受同一流错误路径约束。非流式聚合通过 RPC 返回错误时保留 502 状态。
 
-## 行为边界
+客户端可按自己的策略重试 5xx。已核对的 DeepSeek Harness 外部 OpenAI compatible 路径（源码 `d743267388641bc76f17c45ce8b4c231aed1d32c`）按既有文案规则将上述错误归为 `SERVER`；实际重试取决于 `llm-retry`、重试策略和预算。插件结束失败请求，不自动重放已开始的输出。
 
-- 「流式卡住时提前截流」默认开启，首段有效输出后连续空闲 10 秒即结束上游；思考、正文和工具增量重置计时，heartbeat、role 和空帧不重置。它对所有上游 SSE 请求生效（含非流式聚合），原生非流式不适用，不缩短首字等待，也不预知 LiteLLM 失败。
-- 空闲超时以 502 错误终止并免账号和模型冷却。下游响应前可返回 HTTP 502；SSE 已开始时 HTTP 200 保持，仅发送错误帧结束流，不补正常完成帧。完整设置见 [进阶配置](configuration.md#流式卡住时提前截流)。
-- 指定 Fireworks/LiteLLM 响应截断、本地取消/截止时间、已确认的网络故障默认免账号和模型冷却。真实 HTTP 限流、认证和额度错误保持各自处理。
-- 上游已有错误 HTTP 状态时，即使读取错误正文时断网，也保留该状态。旧回调只有文字时不会推断网络豁免。
-- 明确配置的「停止并冷却」「继续并冷却」规则仍优先。
-- 重试由客户端执行，插件结束失败请求，不重放已开始的输出，不把失败流伪装成成功。
+## 冷却与网络分类
+
+账号和模型冷却由 CPA 按实际收到的错误、匹配规则及默认策略决定。插件的响应截断、提前截流或本地取消分类不构成免冷却承诺；插件自己的套餐额度保护和团队限流退避独立处理。规则与调度见 [进阶配置](configuration.md#统一错误规则) 和 [调度说明](scheduling.md#响应截断与模型冷却)。
+
+插件独立网络路径保留错误类型，可分类连接重置、DNS / TLS 故障、超时和提前 EOF。原版 CPA HTTP 回调只返回错误字符串，分类信息丢失，插件不凭文字推断网络来源。上游已返回错误 HTTP 状态时，即使读取错误正文再次断网，仍保留原状态。
+
+## 可选字段的被动兼容
+
+运行实现保留对 `error_details`、`error_details_supported`、`model_states_available` 和 `model_states` 等可选字段的兼容读取。仅在宿主实际提供时使用这些信息，原版安装流程不依赖它们。
+
+宿主未确认结构化流错误支持时，日志中的 `legacy_host_unknown` 表示处理结果未确认，实际冷却以 CPA 状态为准。未提供模型范围时，账号卡片显示「调度受限」。
