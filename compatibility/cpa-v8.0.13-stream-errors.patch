@@ -1,0 +1,1254 @@
+diff --git a/internal/pluginhost/auth_callbacks.go b/internal/pluginhost/auth_callbacks.go
+index 558b67d9..1800b3cf 100644
+--- a/internal/pluginhost/auth_callbacks.go
++++ b/internal/pluginhost/auth_callbacks.go
+@@ -436,6 +436,7 @@ func (h *Host) buildHostAuthFileEntry(auth *coreauth.Auth) *pluginapi.HostAuthFi
+ 		Failed:         auth.Failed,
+ 		RecentRequests: hostRecentRequests(auth),
+ 	}
++	projectHostAuthRuntime(entry, auth, time.Now())
+ 	if email := authEmail(auth); email != "" {
+ 		entry.Email = email
+ 	}
+@@ -444,7 +445,11 @@ func (h *Host) buildHostAuthFileEntry(auth *coreauth.Auth) *pluginapi.HostAuthFi
+ 	}
+ 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
+ 		entry.AccountType = accountType
+-		entry.Account = account
++		// AccountInfo returns the raw API key for API-key credentials. Runtime
++		// callbacks expose scheduling state, so retain only OAuth identifiers.
++		if accountType != "api_key" {
++			entry.Account = account
++		}
+ 	}
+ 	if !auth.CreatedAt.IsZero() {
+ 		entry.CreatedAt = auth.CreatedAt
+diff --git a/internal/pluginhost/auth_runtime.go b/internal/pluginhost/auth_runtime.go
+new file mode 100644
+index 00000000..219ab3b8
+--- /dev/null
++++ b/internal/pluginhost/auth_runtime.go
+@@ -0,0 +1,51 @@
++package pluginhost
++
++import (
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++// runtimeRetryAfter projects only live deadlines, including quota recovery.
++func runtimeRetryAfter(retryAt, recoverAt, now time.Time) time.Time {
++	var next time.Time
++	for _, candidate := range []time.Time{retryAt, recoverAt} {
++		if candidate.After(now) && candidate.After(next) {
++			next = candidate
++		}
++	}
++	return next
++}
++
++func projectHostAuthRuntime(entry *pluginapi.HostAuthFileEntry, auth *coreauth.Auth, now time.Time) {
++	entry.ModelStatesAvailable = true
++	entry.ModelStates = make(map[string]pluginapi.HostAuthModelState, len(auth.ModelStates))
++	for model, state := range auth.ModelStates {
++		if state == nil {
++			continue
++		}
++		entry.ModelStates[model] = pluginapi.HostAuthModelState{
++			Status:         string(state.Status),
++			StatusMessage:  logging.SafeDiagnosticForLog(state.StatusMessage),
++			Unavailable:    state.Unavailable,
++			NextRetryAfter: runtimeRetryAfter(state.NextRetryAfter, state.Quota.NextRecoverAt, now),
++		}
++	}
++	entry.StatusMessage = logging.SafeDiagnosticForLog(auth.StatusMessage)
++	entry.CredentialBlocked = coreauth.HasUnauthorizedAuthFailure(auth) || coreauth.HasDisabledInvalidGrantFailure(auth)
++	if auth.Disabled || auth.Status == coreauth.StatusDisabled || entry.CredentialBlocked {
++		return
++	}
++	if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
++		entry.CredentialCooldown = !runtimeRetryAfter(auth.NextRetryAfter, auth.Quota.NextRecoverAt, now).IsZero()
++		return
++	}
++	// A direct auth-level failure has no per-model state. Once model states
++	// exist, Unavailable/NextRetryAfter are aggregates and must not be promoted
++	// to a credential-wide penalty.
++	if len(auth.ModelStates) == 0 && auth.LastError != nil && auth.Status == coreauth.StatusError && auth.Unavailable {
++		entry.CredentialCooldown = !runtimeRetryAfter(auth.NextRetryAfter, auth.Quota.NextRecoverAt, now).IsZero()
++	}
++}
+diff --git a/internal/pluginhost/auth_runtime_test.go b/internal/pluginhost/auth_runtime_test.go
+new file mode 100644
+index 00000000..102d21ba
+--- /dev/null
++++ b/internal/pluginhost/auth_runtime_test.go
+@@ -0,0 +1,179 @@
++package pluginhost
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++func TestHostAuthRuntimeCallbacksProjectModelStates(t *testing.T) {
++	now := time.Now().UTC().Truncate(time.Second)
++	retryAt, recoverAt := now.Add(time.Minute), now.Add(time.Hour)
++	auth := &coreauth.Auth{
++		ID: "runtime-model-projection", Provider: "demo", Status: coreauth.StatusError,
++		StatusMessage: "api_key=fixture-auth-secret", Unavailable: true, NextRetryAfter: retryAt,
++		Attributes: map[string]string{"runtime_only": "true"},
++		Metadata:   map[string]any{"api_key": "fixture-metadata-secret", "disable_cooling": false},
++		Quota:      coreauth.QuotaState{Exceeded: true, Reason: "quota", NextRecoverAt: recoverAt},
++		LastError:  &coreauth.Error{Message: "fixture-auth-error-secret", HTTPStatus: 429},
++		ModelStates: map[string]*coreauth.ModelState{
++			"quota-model": {
++				Status: coreauth.StatusError, StatusMessage: "token=fixture-model-secret", Unavailable: true,
++				NextRetryAfter: retryAt,
++				Quota:          coreauth.QuotaState{Exceeded: true, NextRecoverAt: recoverAt, Signals: map[string]string{"secret": "fixture-quota-secret"}},
++				LastError:      &coreauth.Error{Message: "fixture-model-error-secret", HTTPStatus: 429},
++			},
++			"retry-model": {
++				Status: coreauth.StatusError, StatusMessage: "temporarily unavailable", Unavailable: true,
++				NextRetryAfter: recoverAt, Quota: coreauth.QuotaState{NextRecoverAt: retryAt},
++			},
++		},
++	}
++	empty := &coreauth.Auth{
++		ID: "runtime-empty-projection", Provider: "demo", Status: coreauth.StatusActive,
++		Attributes: map[string]string{"runtime_only": "true", coreauth.AttributeAPIKey: "fixture-attribute-key-secret"},
++	}
++	host := New()
++	manager := coreauth.NewManager(nil, nil, nil)
++	host.SetAuthManager(manager)
++	for _, fixture := range []*coreauth.Auth{auth, empty} {
++		if _, err := manager.Register(context.Background(), fixture); err != nil {
++			t.Fatal(err)
++		}
++	}
++	checkEntry := func(t *testing.T, entry pluginapi.HostAuthFileEntry) {
++		t.Helper()
++		if !entry.ModelStatesAvailable || entry.ModelStates == nil {
++			t.Fatal("runtime capability must include an initialized model map")
++		}
++		if entry.CredentialCooldown || entry.CredentialBlocked {
++			t.Fatal("model aggregate was promoted to a credential-wide penalty")
++		}
++		if entry.ID == empty.ID {
++			if len(entry.ModelStates) != 0 {
++				t.Fatal("empty runtime unexpectedly has model states")
++			}
++			if entry.Account != "" {
++				t.Fatal("API key must not be returned as an account identifier")
++			}
++			return
++		}
++		if len(entry.ModelStates) != 2 {
++			t.Fatalf("model state count = %d, want 2", len(entry.ModelStates))
++		}
++		for _, model := range []string{"quota-model", "retry-model"} {
++			state := entry.ModelStates[model]
++			if state.Status != string(coreauth.StatusError) || !state.Unavailable || !state.NextRetryAfter.Equal(recoverAt) {
++				t.Fatalf("model %s lost status or later deadline: %+v", model, state)
++			}
++		}
++	}
++	checkWire := func(t *testing.T, raw []byte) {
++		t.Helper()
++		for _, secret := range []string{"fixture-auth-secret", "fixture-metadata-secret", "fixture-auth-error-secret", "fixture-model-secret", "fixture-quota-secret", "fixture-model-error-secret", "fixture-attribute-key-secret"} {
++			if strings.Contains(string(raw), secret) {
++				t.Fatal("runtime callback exposed a fixture secret")
++			}
++		}
++	}
++	t.Run("list", func(t *testing.T) {
++		raw, err := host.callFromPlugin(context.Background(), pluginabi.MethodHostAuthList, nil)
++		if err != nil {
++			t.Fatal(err)
++		}
++		checkWire(t, raw)
++		response, err := decodeRPCEnvelope[rpcHostAuthListResponse](raw)
++		if err != nil || len(response.Files) != 2 {
++			t.Fatalf("runtime list count = %d, error = %v", len(response.Files), err)
++		}
++		for _, entry := range response.Files {
++			checkEntry(t, entry)
++		}
++	})
++	for _, fixture := range []*coreauth.Auth{auth, empty} {
++		t.Run("get-runtime/"+fixture.ID, func(t *testing.T) {
++			request, err := json.Marshal(pluginapi.HostAuthGetRequest{AuthIndex: fixture.Index})
++			if err != nil {
++				t.Fatal(err)
++			}
++			raw, err := host.callFromPlugin(context.Background(), pluginabi.MethodHostAuthGetRuntime, request)
++			if err != nil {
++				t.Fatal(err)
++			}
++			checkWire(t, raw)
++			response, err := decodeRPCEnvelope[pluginapi.HostAuthGetRuntimeResponse](raw)
++			if err != nil {
++				t.Fatal(err)
++			}
++			checkEntry(t, response.Auth)
++			encoded, err := json.Marshal(response.Auth)
++			if err != nil {
++				t.Fatal(err)
++			}
++			var entry map[string]json.RawMessage
++			if err := json.Unmarshal(encoded, &entry); err != nil {
++				t.Fatal(err)
++			}
++			for _, field := range []string{"metadata", "attributes", "last_error", "quota", "json"} {
++				if _, exists := entry[field]; exists {
++					t.Fatalf("runtime entry contains private field %s", field)
++				}
++			}
++			var states map[string]map[string]json.RawMessage
++			if err := json.Unmarshal(entry["model_states"], &states); err != nil {
++				t.Fatal(err)
++			}
++			for _, state := range states {
++				if len(state) != 4 {
++					t.Fatalf("model projection has %d fields, want 4", len(state))
++				}
++				for _, field := range []string{"status", "status_message", "unavailable", "next_retry_after"} {
++					if _, exists := state[field]; !exists {
++						t.Fatalf("model projection lacks %s", field)
++					}
++				}
++			}
++		})
++	}
++}
++
++func TestHostAuthRuntimeCredentialPenaltyScope(t *testing.T) {
++	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
++	future := now.Add(time.Hour)
++	for _, test := range []struct {
++		name     string
++		auth     coreauth.Auth
++		cooldown bool
++		blocked  bool
++	}{
++		{name: "credential_quota", auth: coreauth.Auth{Quota: coreauth.QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: future}, ModelStates: map[string]*coreauth.ModelState{"model": {}}}, cooldown: true},
++		{name: "expired_credential_quota", auth: coreauth.Auth{Quota: coreauth.QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: now.Add(-time.Second)}}},
++		{name: "model_aggregate", auth: coreauth.Auth{Unavailable: true, NextRetryAfter: future, ModelStates: map[string]*coreauth.ModelState{"model": {Unavailable: true, NextRetryAfter: future}}}},
++		{name: "unavailable_without_scope", auth: coreauth.Auth{Unavailable: true, NextRetryAfter: future}},
++		{name: "direct_auth_failure", auth: coreauth.Auth{Status: coreauth.StatusError, Unavailable: true, NextRetryAfter: future, LastError: &coreauth.Error{HTTPStatus: 503}}, cooldown: true},
++		{name: "terminal_unauthorized", auth: coreauth.Auth{Status: coreauth.StatusError, Unavailable: true, LastError: &coreauth.Error{HTTPStatus: 401}}, blocked: true},
++		{name: "pending_unauthorized_refresh", auth: coreauth.Auth{Status: coreauth.StatusError, Unavailable: true, NextRefreshAfter: future, LastError: &coreauth.Error{HTTPStatus: 401}}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			var entry pluginapi.HostAuthFileEntry
++			projectHostAuthRuntime(&entry, &test.auth, now)
++			if !entry.ModelStatesAvailable || entry.ModelStates == nil || entry.CredentialCooldown != test.cooldown || entry.CredentialBlocked != test.blocked {
++				t.Fatalf("incorrect runtime scope projection: %+v", entry)
++			}
++		})
++	}
++	var entry pluginapi.HostAuthFileEntry
++	projectHostAuthRuntime(&entry, &coreauth.Auth{ModelStates: map[string]*coreauth.ModelState{
++		"expired": {NextRetryAfter: now.Add(-time.Second), Quota: coreauth.QuotaState{NextRecoverAt: now}},
++		"nil":     nil,
++	}}, now)
++	if len(entry.ModelStates) != 1 || !entry.ModelStates["expired"].NextRetryAfter.IsZero() {
++		t.Fatal("expired deadlines or nil model states leaked into live scheduling projection")
++	}
++}
+diff --git a/internal/pluginhost/host_callbacks.go b/internal/pluginhost/host_callbacks.go
+index 4af872a9..2cce791b 100644
+--- a/internal/pluginhost/host_callbacks.go
++++ b/internal/pluginhost/host_callbacks.go
+@@ -48,13 +48,15 @@ type rpcHostHTTPStreamResponse struct {
+ }
+ 
+ type rpcHostHTTPStreamReadRequest struct {
+-	StreamID string `json:"stream_id"`
++	StreamID       string `json:"stream_id"`
++	HostCallbackID string `json:"host_callback_id,omitempty"`
+ }
+ 
+ type rpcHostHTTPStreamReadResponse struct {
+-	Payload []byte `json:"payload,omitempty"`
+-	Error   string `json:"error,omitempty"`
+-	Done    bool   `json:"done,omitempty"`
++	Payload      []byte                          `json:"payload,omitempty"`
++	Error        string                          `json:"error,omitempty"`
++	ErrorDetails *pluginapi.HostHTTPErrorDetails `json:"error_details,omitempty"`
++	Done         bool                            `json:"done,omitempty"`
+ }
+ 
+ type rpcHostHTTPStreamCloseRequest struct {
+@@ -198,16 +200,16 @@ func (h *Host) callbackCallerPluginID(ctx context.Context, callbackID string) st
+ func (h *Host) callHostHTTPDo(ctx context.Context, request []byte) ([]byte, error) {
+ 	httpReq, callbackID, operationID, errDecode := decodeHostHTTPRequestWithOperationID(request)
+ 	if errDecode != nil {
+-		return nil, errDecode
++		return hostHTTPCallbackFailure(request, ctx, errDecode)
+ 	}
+ 	operation, errAcquire := h.acquireHostHTTPOperation(ctx, callbackID, operationID)
+ 	if errAcquire != nil {
+-		return nil, errAcquire
++		return hostHTTPCallbackFailure(request, ctx, errAcquire)
+ 	}
+ 	defer operation.finish()
+ 	resp, errDo := h.newHTTPClient(nil).Do(operation.ctx, httpReq)
+ 	if errDo != nil {
+-		return nil, errDo
++		return hostHTTPCallbackFailure(request, operation.ctx, errDo)
+ 	}
+ 	return marshalRPCResult(resp)
+ }
+@@ -219,11 +221,11 @@ func newStreamContext(ctx context.Context) (context.Context, context.CancelFunc)
+ func (h *Host) callHostHTTPDoStream(ctx context.Context, request []byte) ([]byte, error) {
+ 	httpReq, callbackID, operationID, errDecode := decodeHostHTTPRequestWithOperationID(request)
+ 	if errDecode != nil {
+-		return nil, errDecode
++		return hostHTTPCallbackFailure(request, ctx, errDecode)
+ 	}
+ 	operation, errAcquire := h.acquireHostHTTPOperation(ctx, callbackID, operationID)
+ 	if errAcquire != nil {
+-		return nil, errAcquire
++		return hostHTTPCallbackFailure(request, ctx, errAcquire)
+ 	}
+ 	streamCtx := operation.ctx
+ 	streamID := ""
+@@ -240,10 +242,14 @@ func (h *Host) callHostHTTPDoStream(ctx context.Context, request []byte) ([]byte
+ 
+ 	resp, errDo := h.newHTTPClient(nil).DoStream(streamCtx, httpReq)
+ 	if errDo != nil {
+-		return nil, errDo
++		return hostHTTPCallbackFailure(request, streamCtx, errDo)
+ 	}
+ 	if h != nil && h.httpStreams != nil {
+-		streamID = h.httpStreams.open(operation.pluginID, operation.instance, resp.Chunks, operation.cancel, operation.finish)
++		chunks, stop := preserveHostHTTPStreamErrors(streamCtx, resp.Chunks)
++		streamID = h.httpStreams.open(operation.pluginID, operation.instance, chunks, operation.cancel, func() {
++			stop()
++			operation.finish()
++		})
+ 	}
+ 	if streamID == "" {
+ 		return nil, fmt.Errorf("host http stream bridge is unavailable")
+@@ -261,7 +267,7 @@ func (h *Host) callHostHTTPDoStream(ctx context.Context, request []byte) ([]byte
+ 			h.httpStreams.close(operation.pluginID, operation.instance, streamID)
+ 		}
+ 		if !h.httpOperations.setCleanup(operation.pluginID, operation.operationID, operation.entry, cleanupStream) {
+-			return nil, context.Canceled
++			return hostHTTPCallbackFailure(request, streamCtx, context.Canceled)
+ 		}
+ 	}
+ 	keepStream = true
+@@ -275,7 +281,7 @@ func (h *Host) callHostHTTPOperationOpen(ctx context.Context, request []byte) ([
+ 	}
+ 	operationID, errOpen := h.openHostHTTPOperation(ctx, req.HostCallbackID)
+ 	if errOpen != nil {
+-		return nil, errOpen
++		return hostHTTPCallbackFailure(request, ctx, errOpen)
+ 	}
+ 	return marshalRPCResult(rpcHostHTTPOperationOpenResponse{OperationID: operationID})
+ }
+@@ -308,16 +314,31 @@ func (h *Host) callHostHTTPStreamRead(ctx context.Context, request []byte) ([]by
+ 	if h == nil || h.httpStreams == nil {
+ 		return nil, fmt.Errorf("host http stream bridge is unavailable")
+ 	}
+-	chunk, done, errRead := h.httpStreams.read(ctx, hostCallbackPluginIDFromContext(ctx), hostCallbackInstanceFromContext(ctx), req.StreamID)
++	readCtx := ctx
++	if req.HostCallbackID != "" {
++		parent, pluginID, instance, exists := h.lookupCallbackContext(req.HostCallbackID)
++		if !exists || (hostCallbackPluginIDFromContext(ctx) != "" && hostCallbackPluginIDFromContext(ctx) != pluginID) || hostCallbackInstanceFromContext(ctx) != instance {
++			return nil, fmt.Errorf("host HTTP read callback ID does not belong to the calling plugin instance")
++		}
++		if parent.Err() != nil {
++			return hostHTTPCallbackFailure(request, parent, parent.Err())
++		}
++		readCtx = parent
++	}
++	chunk, done, errRead := h.httpStreams.read(readCtx, hostCallbackPluginIDFromContext(ctx), hostCallbackInstanceFromContext(ctx), req.StreamID)
+ 	if errRead != nil {
+-		return nil, errRead
++		return hostHTTPCallbackFailure(request, readCtx, errRead)
+ 	}
+ 	resp := rpcHostHTTPStreamReadResponse{
+ 		Payload: append([]byte(nil), chunk.Payload...),
+ 		Done:    done,
+ 	}
+ 	if chunk.Err != nil {
+-		resp.Error = chunk.Err.Error()
++		resp.ErrorDetails = classifyHostHTTPError(readCtx, chunk.Err)
++		resp.Error = "host HTTP stream interrupted"
++		if resp.ErrorDetails != nil {
++			resp.Error += " (" + resp.ErrorDetails.Kind + ")"
++		}
+ 		resp.Done = true
+ 	}
+ 	return marshalRPCResult(resp)
+@@ -386,13 +407,11 @@ func (h *Host) callHostStreamEmit(ctx context.Context, request []byte) ([]byte,
+ 		return nil, fmt.Errorf("decode stream emit request: %w", errUnmarshal)
+ 	}
+ 	chunk := pluginapi.ExecutorStreamChunk{Payload: append([]byte(nil), req.Payload...)}
+-	if req.Error != "" {
+-		chunk.Err = fmt.Errorf("%s", req.Error)
+-	}
++	chunk.Err = newStreamCallbackError(req.Error, req.ErrorDetails)
+ 	if errEmit := h.streams.emit(ctx, req.StreamID, chunk); errEmit != nil {
+ 		return nil, errEmit
+ 	}
+-	return marshalRPCResult(rpcEmptyResponse{})
++	return marshalRPCResult(pluginapi.HostStreamCallbackResponse{ErrorDetailsSupported: true})
+ }
+ 
+ func (h *Host) callHostStreamClose(request []byte) ([]byte, error) {
+@@ -400,8 +419,8 @@ func (h *Host) callHostStreamClose(request []byte) ([]byte, error) {
+ 	if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+ 		return nil, fmt.Errorf("decode stream close request: %w", errUnmarshal)
+ 	}
+-	h.streams.close(req.StreamID, req.Error)
+-	return marshalRPCResult(rpcEmptyResponse{})
++	h.streams.closeError(req.StreamID, newStreamCallbackError(req.Error, req.ErrorDetails))
++	return marshalRPCResult(pluginapi.HostStreamCallbackResponse{ErrorDetailsSupported: true})
+ }
+ 
+ func (h *Host) callHostModelExecute(ctx context.Context, request []byte) ([]byte, error) {
+diff --git a/internal/pluginhost/http_callback_errors.go b/internal/pluginhost/http_callback_errors.go
+new file mode 100644
+index 00000000..54750cc8
+--- /dev/null
++++ b/internal/pluginhost/http_callback_errors.go
+@@ -0,0 +1,126 @@
++package pluginhost
++
++import (
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"encoding/json"
++	"errors"
++	"io"
++	"net"
++	"sync"
++	"syscall"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++// Only typed transport sources qualify. url.Error alone, arbitrary callback
++// text and upstream HTTP error statuses never establish a network fault.
++func classifyHostHTTPError(ctx context.Context, err error) *pluginapi.HostHTTPErrorDetails {
++	if err == nil {
++		return nil
++	}
++	var status interface{ StatusCode() int }
++	if errors.As(err, &status) && status.StatusCode() >= 400 && status.StatusCode() <= 599 {
++		return nil
++	}
++	details := &pluginapi.HostHTTPErrorDetails{Code: upstreamNetworkErrorCode, HTTPStatus: 502}
++	switch {
++	case errors.Is(err, context.DeadlineExceeded) || (ctx != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded)):
++		details.Kind, details.Code, details.HTTPStatus = "deadline", requestDeadlineCode, 504
++	case errors.Is(err, context.Canceled) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)):
++		details.Kind, details.Code, details.HTTPStatus = "canceled", requestCanceledCode, 499
++	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
++		details.Kind = "eof"
++	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.ECONNABORTED), errors.Is(err, syscall.EPIPE):
++		details.Kind = "connection_reset"
++	case errors.Is(err, net.ErrClosed), errors.Is(err, io.ErrClosedPipe):
++		details.Kind = "connection_closed"
++	default:
++		var dns *net.DNSError
++		var certificate *tls.CertificateVerificationError
++		var authority x509.UnknownAuthorityError
++		var invalidCertificate x509.CertificateInvalidError
++		var hostname x509.HostnameError
++		var record tls.RecordHeaderError
++		var alert tls.AlertError
++		var timeout interface{ Timeout() bool }
++		var operation *net.OpError
++		switch {
++		case errors.As(err, &dns):
++			details.Kind = "dns"
++		case errors.As(err, &certificate), errors.As(err, &authority), errors.As(err, &invalidCertificate), errors.As(err, &hostname), errors.As(err, &record), errors.As(err, &alert):
++			details.Kind = "tls"
++		case errors.As(err, &timeout) && timeout.Timeout():
++			details.Kind = "timeout"
++		case errors.As(err, &operation), errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
++			details.Kind = "network"
++		default:
++			return nil
++		}
++	}
++	return details
++}
++
++type safeHostHTTPError struct {
++	err error
++}
++
++func (e *safeHostHTTPError) Error() string { return "host HTTP callback failed" }
++func (e *safeHostHTTPError) Unwrap() error { return e.err }
++
++func hostHTTPCallbackFailure(request []byte, ctx context.Context, err error) ([]byte, error) {
++	var options struct {
++		ErrorDetailsSupported bool `json:"error_details_supported"`
++	}
++	details := classifyHostHTTPError(ctx, err)
++	if json.Unmarshal(request, &options) == nil && options.ErrorDetailsSupported && details != nil {
++		return marshalRPCResult(pluginapi.HostHTTPErrorResult{
++			Error: "host HTTP callback failed (" + details.Kind + ")", ErrorDetails: details,
++		})
++	}
++	// Transport/configuration errors can contain URLs, credentials or request
++	// fragments. Retain their identity for in-process callers, never their text.
++	return nil, &safeHostHTTPError{err: err}
++}
++
++// DoStream's producer may close its channel silently when the request context
++// ends. Preserve that context as a terminal error, without adding a deadline.
++// stop unblocks the forwarding goroutine when a caller closes/abandons a stream.
++func preserveHostHTTPStreamErrors(ctx context.Context, input <-chan pluginapi.HTTPStreamChunk) (<-chan pluginapi.HTTPStreamChunk, func()) {
++	output := make(chan pluginapi.HTTPStreamChunk)
++	done := make(chan struct{})
++	var once sync.Once
++	stop := func() { once.Do(func() { close(done) }) }
++	go func() {
++		defer close(output)
++		send := func(chunk pluginapi.HTTPStreamChunk) bool {
++			select {
++			case output <- chunk:
++				return true
++			case <-done:
++				return false
++			}
++		}
++		for {
++			select {
++			case <-done:
++				return
++			case <-ctx.Done():
++				send(pluginapi.HTTPStreamChunk{Err: context.Cause(ctx)})
++				return
++			case chunk, ok := <-input:
++				if !ok {
++					if ctx.Err() != nil {
++						send(pluginapi.HTTPStreamChunk{Err: context.Cause(ctx)})
++					}
++					return
++				}
++				if !send(chunk) || chunk.Err != nil {
++					return
++				}
++			}
++		}
++	}()
++	return output, stop
++}
+diff --git a/internal/pluginhost/http_callback_errors_test.go b/internal/pluginhost/http_callback_errors_test.go
+new file mode 100644
+index 00000000..4bec7fa4
+--- /dev/null
++++ b/internal/pluginhost/http_callback_errors_test.go
+@@ -0,0 +1,103 @@
++package pluginhost
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"strings"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++func TestHostHTTPCallbackFaultClassificationAndOptIn(t *testing.T) {
++	for _, tc := range []struct {
++		name   string
++		err    error
++		code   string
++		status int
++	}{
++		{"reset", syscall.ECONNRESET, upstreamNetworkErrorCode, 502},
++		{"eof", io.ErrUnexpectedEOF, upstreamNetworkErrorCode, 502},
++		{"dns", &net.DNSError{Err: "fixture resolution failure"}, upstreamNetworkErrorCode, 502},
++		{"cancel", context.Canceled, requestCanceledCode, 499},
++		{"deadline", context.DeadlineExceeded, requestDeadlineCode, 504},
++		{"untyped text", errors.New("connection reset; HTTP 401"), "", 0},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			// A proxy URL in the outer error must not escape the callback.
++			err := &url.Error{Op: "Post", URL: "https://fixture-user:fixture-secret@example.invalid", Err: tc.err}
++			response, rpcErr := hostHTTPCallbackFailure([]byte(`{"error_details_supported":true}`), context.Background(), err)
++			if tc.code == "" {
++				if rpcErr == nil || strings.Contains(rpcErr.Error(), "fixture-secret") {
++					t.Fatalf("legacy/unknown fault lost conservative fallback: %v", rpcErr)
++				}
++				return
++			}
++			fault, decodeErr := decodeRPCEnvelope[pluginapi.HostHTTPErrorResult](response)
++			if rpcErr != nil || decodeErr != nil || fault.ErrorDetails == nil || fault.ErrorDetails.Code != tc.code || fault.ErrorDetails.HTTPStatus != tc.status {
++				t.Fatalf("fault = %#v, callback=%v, decode=%v", fault, rpcErr, decodeErr)
++			}
++			if strings.Contains(string(response), "fixture-secret") {
++				t.Fatal("callback exposed proxy credentials")
++			}
++			_, legacyErr := hostHTTPCallbackFailure([]byte(`{}`), context.Background(), err)
++			if legacyErr == nil || !errors.Is(legacyErr, tc.err) {
++				t.Fatal("legacy callback changed its RPC error contract")
++			}
++		})
++	}
++}
++
++func TestHostHTTPStreamPreservesReadFaultAndCancellation(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Length", "100")
++		_, _ = w.Write([]byte("partial body"))
++	}))
++	defer server.Close()
++	host := New()
++	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	raw, err := host.callFromPlugin(ctx, pluginabi.MethodHostHTTPDoStream, []byte(`{"url":"`+server.URL+`","error_details_supported":true}`))
++	stream, decodeErr := decodeRPCEnvelope[rpcHostHTTPStreamResponse](raw)
++	if err != nil || decodeErr != nil || stream.StatusCode != 200 {
++		t.Fatalf("stream open: %v, %v, %#v", err, decodeErr, stream)
++	}
++	defer host.httpStreams.close("", nil, stream.StreamID)
++	var body strings.Builder
++	var terminal *pluginapi.HostHTTPErrorDetails
++	for i := 0; i < 4; i++ {
++		raw, err = host.callFromPlugin(ctx, pluginabi.MethodHostHTTPStreamRead, []byte(`{"stream_id":"`+stream.StreamID+`","error_details_supported":true}`))
++		chunk, decodeErr := decodeRPCEnvelope[rpcHostHTTPStreamReadResponse](raw)
++		if err != nil || decodeErr != nil {
++			t.Fatalf("read: %v, %v", err, decodeErr)
++		}
++		body.Write(chunk.Payload)
++		if chunk.Done {
++			terminal = chunk.ErrorDetails
++			break
++		}
++	}
++	if body.String() != "partial body" || terminal == nil || terminal.Code != upstreamNetworkErrorCode || terminal.Kind != "eof" {
++		t.Fatalf("body=%q, terminal=%#v", body.String(), terminal)
++	}
++	parent, cancelParent := context.WithCancel(context.Background())
++	chunks, stop := preserveHostHTTPStreamErrors(parent, make(chan pluginapi.HTTPStreamChunk))
++	defer stop()
++	cancelParent()
++	select {
++	case chunk := <-chunks:
++		if !errors.Is(chunk.Err, context.Canceled) {
++			t.Fatalf("silent cancellation: %#v", chunk)
++		}
++	case <-ctx.Done():
++		t.Fatal("cancellation did not terminate the stream")
++	}
++}
+diff --git a/internal/pluginhost/rpc_client.go b/internal/pluginhost/rpc_client.go
+index 96e3785d..ef88fd20 100644
+--- a/internal/pluginhost/rpc_client.go
++++ b/internal/pluginhost/rpc_client.go
+@@ -57,6 +57,21 @@ func (e rpcError) StatusCode() int {
+ 	return e.statusCode
+ }
+ 
++// Precisely classified truncation and local request termination are request faults.
++// Authentication, payment and quota statuses retain their cooldown behavior.
++func (e rpcError) IsRequestScoped() bool {
++	switch e.statusCode {
++	case 401, 402, 403, 429:
++		return false
++	}
++	switch e.Code {
++	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, requestCanceledCode, requestDeadlineCode:
++		return true
++	default:
++		return false
++	}
++}
++
+ type rpcResponseNormalizer struct {
+ 	*rpcPluginAdapter
+ 	method string
+diff --git a/internal/pluginhost/stream_bridge.go b/internal/pluginhost/stream_bridge.go
+index 33a7a459..e85cbd02 100644
+--- a/internal/pluginhost/stream_bridge.go
++++ b/internal/pluginhost/stream_bridge.go
+@@ -39,20 +39,12 @@ type streamBridgeEmit struct {
+ }
+ 
+ type streamBridgeClose struct {
+-	errorMessage string
+-	accepted     chan struct{}
++	err      error
++	accepted chan struct{}
+ }
+ 
+-type rpcStreamEmitRequest struct {
+-	StreamID string `json:"stream_id"`
+-	Payload  []byte `json:"payload,omitempty"`
+-	Error    string `json:"error,omitempty"`
+-}
+-
+-type rpcStreamCloseRequest struct {
+-	StreamID string `json:"stream_id"`
+-	Error    string `json:"error,omitempty"`
+-}
++type rpcStreamEmitRequest = pluginapi.HostStreamEmitRequest
++type rpcStreamCloseRequest = pluginapi.HostStreamCloseRequest
+ 
+ func newStreamBridge() *streamBridge {
+ 	return &streamBridge{streams: make(map[string]*streamBridgeStream)}
+@@ -97,8 +89,8 @@ func (s *streamBridgeStream) run() {
+ 		case request := <-s.closes:
+ 			s.markClosed()
+ 			close(request.accepted)
+-			if request.errorMessage != "" {
+-				queue = append(queue, pluginapi.ExecutorStreamChunk{Err: fmt.Errorf("%s", request.errorMessage)})
++			if request.err != nil {
++				queue = append(queue, pluginapi.ExecutorStreamChunk{Err: request.err})
+ 			}
+ 			for len(queue) > 0 {
+ 				select {
+@@ -162,12 +154,16 @@ func (s *streamBridgeStream) emit(ctx context.Context, chunk pluginapi.ExecutorS
+ }
+ 
+ func (s *streamBridgeStream) close(errorMessage string) {
++	s.closeError(newStreamCallbackError(errorMessage, nil))
++}
++
++func (s *streamBridgeStream) closeError(err error) {
+ 	if s == nil {
+ 		return
+ 	}
+ 	request := streamBridgeClose{
+-		errorMessage: errorMessage,
+-		accepted:     make(chan struct{}),
++		err:      err,
++		accepted: make(chan struct{}),
+ 	}
+ 	select {
+ 	case <-s.finished:
+@@ -229,6 +225,10 @@ func (b *streamBridge) emit(ctx context.Context, id string, chunk pluginapi.Exec
+ }
+ 
+ func (b *streamBridge) close(id string, errorMessage string) {
++	b.closeError(id, newStreamCallbackError(errorMessage, nil))
++}
++
++func (b *streamBridge) closeError(id string, err error) {
+ 	if b == nil || id == "" {
+ 		return
+ 	}
+@@ -239,5 +239,5 @@ func (b *streamBridge) close(id string, errorMessage string) {
+ 	if stream == nil {
+ 		return
+ 	}
+-	stream.close(errorMessage)
++	stream.closeError(err)
+ }
+diff --git a/internal/pluginhost/stream_errors.go b/internal/pluginhost/stream_errors.go
+new file mode 100644
+index 00000000..b5a69710
+--- /dev/null
++++ b/internal/pluginhost/stream_errors.go
+@@ -0,0 +1,83 @@
++package pluginhost
++
++import (
++	"errors"
++	"strings"
++	"time"
++
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++const (
++	upstreamTransportIncompleteCode = "upstream_transport_incomplete"
++	upstreamNetworkErrorCode        = "upstream_network_error"
++	requestCanceledCode             = "request_canceled"
++	requestDeadlineCode             = "request_deadline_exceeded"
++)
++
++// streamCallbackError carries the same typed fault through the stream bridge
++// and the auth manager, without changing the plugin's human-readable message.
++type streamCallbackError struct {
++	result  *coreauth.Error
++	details pluginapi.HostStreamErrorDetails
++}
++
++func newStreamCallbackError(message string, details *pluginapi.HostStreamErrorDetails) error {
++	if details == nil {
++		if message == "" {
++			return nil
++		}
++		return errors.New(message)
++	}
++	copyDetails := *details
++	if details.RetryAt != nil {
++		retryAt := *details.RetryAt
++		copyDetails.RetryAt = &retryAt
++	}
++	if message == "" {
++		message = "plugin stream failed"
++	}
++	return &streamCallbackError{
++		result:  &coreauth.Error{Code: details.Code, Message: message, HTTPStatus: details.HTTPStatus},
++		details: copyDetails,
++	}
++}
++
++func (e *streamCallbackError) Error() string   { return e.result.Message }
++func (e *streamCallbackError) Unwrap() error   { return e.result }
++func (e *streamCallbackError) StatusCode() int { return e.result.HTTPStatus }
++
++func (e *streamCallbackError) IsRequestScoped() bool {
++	// Authentication, payment and quota statuses take precedence over scope hints.
++	switch e.StatusCode() {
++	case 401, 402, 403, 429:
++		return false
++	}
++	if e.details.RequestScoped {
++		return true
++	}
++	switch e.details.Code {
++	case upstreamTransportIncompleteCode, upstreamNetworkErrorCode, requestCanceledCode, requestDeadlineCode:
++		return true
++	default:
++		return false
++	}
++}
++
++func (e *streamCallbackError) IsCredentialScoped() bool {
++	switch strings.ToLower(strings.TrimSpace(e.details.Scope)) {
++	case "account", "credential":
++		return true
++	default:
++		return false
++	}
++}
++
++func (e *streamCallbackError) RetryAfter() *time.Duration {
++	if e.details.RetryAt == nil || e.details.RetryAt.IsZero() {
++		return nil
++	}
++	delay := max(time.Duration(0), time.Until(*e.details.RetryAt))
++	return &delay
++}
+diff --git a/internal/pluginhost/stream_errors_test.go b/internal/pluginhost/stream_errors_test.go
+new file mode 100644
+index 00000000..7ae95838
+--- /dev/null
++++ b/internal/pluginhost/stream_errors_test.go
+@@ -0,0 +1,240 @@
++package pluginhost
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"testing"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
++	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
++)
++
++type streamCallbackFixtureExecutor struct {
++	fakeProviderExecutor
++	chunks  <-chan pluginapi.ExecutorStreamChunk
++	failure error
++	calls   []string
++}
++
++func (e *streamCallbackFixtureExecutor) Execute(ctx context.Context, auth *coreauth.Auth, _ coreexecutor.Request, _ coreexecutor.Options) (coreexecutor.Response, error) {
++	coreexecutor.MarkUpstreamAttempt(ctx)
++	e.calls = append(e.calls, auth.ID)
++	return coreexecutor.Response{}, e.failure
++}
++
++func (e *streamCallbackFixtureExecutor) ExecuteStream(ctx context.Context, auth *coreauth.Auth, _ coreexecutor.Request, _ coreexecutor.Options) (*coreexecutor.StreamResult, error) {
++	coreexecutor.MarkUpstreamAttempt(ctx)
++	e.calls = append(e.calls, auth.ID)
++	return &coreexecutor.StreamResult{Chunks: mapExecutorStreamChunks(ctx, e.chunks)}, nil
++}
++
++func streamCallbackFixtureManager(t *testing.T, executor *streamCallbackFixtureExecutor, count int) (*coreauth.Manager, []string) {
++	t.Helper()
++	manager := coreauth.NewManager(nil, &coreauth.FillFirstSelector{}, nil)
++	manager.SetRetryConfig(3, 0, 0)
++	manager.RegisterExecutor(executor)
++	var ids []string
++	for i := 0; i < count; i++ {
++		id := t.Name() + "/" + string(rune('a'+i))
++		auth := &coreauth.Auth{
++			ID: id, Provider: executor.Identifier(), Status: coreauth.StatusActive,
++			Attributes: map[string]string{"priority": "10"},
++			Metadata:   map[string]any{"disable_cooling": false},
++		}
++		if i > 0 {
++			auth.Attributes["priority"] = "0"
++		}
++		registry.GetGlobalRegistry().RegisterClient(id, executor.Identifier(), []*registry.ModelInfo{{ID: "callback-model"}, {ID: "callback-sibling"}})
++		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
++		if _, err := manager.Register(context.Background(), auth); err != nil {
++			t.Fatal(err)
++		}
++		ids = append(ids, id)
++	}
++	return manager, ids
++}
++
++func callStreamFixtureCallback(t *testing.T, host *Host, method string, request any) {
++	t.Helper()
++	raw, err := json.Marshal(request)
++	if err != nil {
++		t.Fatal(err)
++	}
++	response, err := host.callFromPlugin(context.Background(), method, raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	capability, err := decodeRPCEnvelope[pluginapi.HostStreamCallbackResponse](response)
++	if err != nil || !capability.ErrorDetailsSupported {
++		t.Fatalf("structured error capability = %+v, error = %v", capability, err)
++	}
++}
++
++func TestHostStreamErrorDetailsReachAuthResult(t *testing.T) {
++	retryAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
++	for _, test := range []struct {
++		name    string
++		details *pluginapi.HostStreamErrorDetails
++		penalty bool
++	}{
++		{name: "incomplete_code", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: upstreamTransportIncompleteCode, Phase: "stream"}},
++		{name: "local_cancellation", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 499, Code: requestCanceledCode, Scope: "request"}},
++		{name: "local_deadline", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 504, Code: requestDeadlineCode, Scope: "request"}},
++		{name: "network_callback", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: upstreamNetworkErrorCode, Scope: "request"}},
++		{name: "explicit_request_scope", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: "request_fault", RequestScoped: true}},
++		{name: "ordinary_502", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 502, Code: "upstream_error"}, penalty: true},
++		{name: "ordinary_504", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 504, Code: "upstream_error"}, penalty: true},
++		{name: "ordinary_401", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 401, Code: "upstream_auth_error"}, penalty: true},
++		{name: "ordinary_403", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 403, Code: "upstream_auth_error"}, penalty: true},
++		{name: "credential_quota", details: &pluginapi.HostStreamErrorDetails{HTTPStatus: 429, Code: "quota_exceeded", Scope: "credential", RetryAt: &retryAt}, penalty: true},
++		{name: "legacy_string", penalty: true},
++	} {
++		for _, method := range []string{pluginabi.MethodHostStreamClose, pluginabi.MethodHostStreamEmit} {
++			t.Run(test.name+"/"+method, func(t *testing.T) {
++				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++				defer cancel()
++				host := New()
++				id, chunks, cleanup := host.streams.open(ctx)
++				defer cleanup()
++				callStreamFixtureCallback(t, host, pluginabi.MethodHostStreamEmit, pluginapi.HostStreamEmitRequest{StreamID: id, Payload: []byte("data: started\n\n")})
++				const message = "upstream response failed"
++				if method == pluginabi.MethodHostStreamClose {
++					callStreamFixtureCallback(t, host, method, pluginapi.HostStreamCloseRequest{StreamID: id, Error: message, ErrorDetails: test.details})
++				} else {
++					callStreamFixtureCallback(t, host, method, pluginapi.HostStreamEmitRequest{StreamID: id, Error: message, ErrorDetails: test.details})
++					callStreamFixtureCallback(t, host, pluginabi.MethodHostStreamClose, pluginapi.HostStreamCloseRequest{StreamID: id})
++				}
++				executor := &streamCallbackFixtureExecutor{fakeProviderExecutor: fakeProviderExecutor{provider: "callback-fixture"}, chunks: chunks}
++				manager, ids := streamCallbackFixtureManager(t, executor, 1)
++				result, err := manager.ExecuteStream(ctx, []string{executor.Identifier()}, coreexecutor.Request{Model: "callback-model"}, coreexecutor.Options{Stream: true})
++				if err != nil {
++					t.Fatal(err)
++				}
++				var payloads, failures int
++				for chunk := range result.Chunks {
++					if len(chunk.Payload) > 0 {
++						payloads++
++					}
++					if chunk.Err == nil {
++						continue
++					}
++					failures++
++					if chunk.Err.Error() != message {
++						t.Fatalf("legacy error message changed: %v", chunk.Err)
++					}
++					if test.details != nil {
++						var typed *streamCallbackError
++						var authError *coreauth.Error
++						if !errors.As(chunk.Err, &typed) || typed.StatusCode() != test.details.HTTPStatus || !errors.As(chunk.Err, &authError) || authError.Code != test.details.Code {
++							t.Fatalf("typed error lost through bridge/auth: %T %v", chunk.Err, chunk.Err)
++						}
++					}
++				}
++				if payloads != 1 || failures != 1 || len(executor.calls) != 1 {
++					t.Fatalf("started stream replayed or lost chunks: payloads=%d failures=%d calls=%v", payloads, failures, executor.calls)
++				}
++				auth, _ := manager.GetByID(ids[0])
++				state := auth.ModelStates["callback-model"]
++				if test.penalty {
++					if state == nil || !state.Unavailable || !state.NextRetryAfter.After(time.Now()) {
++						t.Fatalf("ordinary error lost cooldown: %+v", state)
++					}
++				} else if auth.Unavailable || auth.Quota.Exceeded || !auth.NextRetryAfter.IsZero() || (state != nil && (state.Unavailable || state.Quota.Exceeded || !state.NextRetryAfter.IsZero())) {
++					t.Fatalf("request-scoped stream fault penalized auth: %+v", auth)
++				}
++				if test.name == "credential_quota" && (auth.Quota.Reason != "credential_quota" || auth.Quota.NextRecoverAt.Before(retryAt.Add(-time.Second)) || state.NextRetryAfter.Before(retryAt.Add(-time.Second))) {
++					t.Fatalf("credential scope/RetryAfter lost: quota=%+v model=%+v", auth.Quota, state)
++				}
++			})
++		}
++	}
++}
++
++func TestRPCRequestFaultStopsWithoutCooldown(t *testing.T) {
++	for _, test := range []struct {
++		name   string
++		code   string
++		status int
++		calls  int
++	}{
++		{name: "classified_incomplete", code: upstreamTransportIncompleteCode, status: 502, calls: 1},
++		{name: "local_cancellation", code: requestCanceledCode, status: 499, calls: 1},
++		{name: "local_deadline", code: requestDeadlineCode, status: 504, calls: 1},
++		{name: "ordinary_502", code: "upstream_error", status: 502, calls: 2},
++		{name: "ordinary_504", code: "upstream_error", status: 504, calls: 2},
++		{name: "ordinary_401", code: "upstream_auth_error", status: 401, calls: 2},
++		{name: "ordinary_403", code: "upstream_auth_error", status: 403, calls: 2},
++		{name: "ordinary_429", code: "upstream_rate_limited", status: 429, calls: 2},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			raw, err := json.Marshal(pluginabi.Envelope{Error: &pluginabi.Error{Code: test.code, Message: "synthetic upstream response failure", HTTPStatus: test.status}})
++			if err != nil {
++				t.Fatal(err)
++			}
++			_, failure := decodeRPCEnvelope[pluginapi.ExecutorResponse](raw)
++			if failure == nil {
++				t.Fatal("expected RPC error")
++			}
++			executor := &streamCallbackFixtureExecutor{fakeProviderExecutor: fakeProviderExecutor{provider: "callback-fixture"}, failure: failure}
++			manager, ids := streamCallbackFixtureManager(t, executor, 2)
++			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++			defer cancel()
++			_, err = manager.Execute(ctx, []string{executor.Identifier()}, coreexecutor.Request{Model: "callback-model"}, coreexecutor.Options{})
++			var rpcFailure rpcError
++			if !errors.As(err, &rpcFailure) || rpcFailure.Code != test.code || rpcFailure.StatusCode() != test.status {
++				t.Fatalf("RPC classification changed at execution boundary: %T %v", err, err)
++			}
++			if len(executor.calls) != test.calls || executor.calls[0] != ids[0] {
++				t.Fatalf("unexpected retry/priority selection: %v", executor.calls)
++			}
++			for _, id := range ids {
++				auth, _ := manager.GetByID(id)
++				state := auth.ModelStates["callback-model"]
++				if test.calls == 1 {
++					if auth.Unavailable || !auth.NextRetryAfter.IsZero() || (state != nil && (state.Unavailable || !state.NextRetryAfter.IsZero())) {
++						t.Fatalf("classified RPC request fault cooled auth: %+v", auth)
++					}
++				} else if state == nil || !state.Unavailable || !state.NextRetryAfter.After(state.UpdatedAt) {
++					t.Fatalf("ordinary RPC %d lost cooldown: %+v", test.status, state)
++				}
++			}
++		})
++	}
++}
++
++func TestPluginRequestFaultHintsPreserveCredentialStatusCooldown(t *testing.T) {
++	for _, code := range []string{requestCanceledCode, requestDeadlineCode, upstreamTransportIncompleteCode, upstreamNetworkErrorCode} {
++		for _, status := range []int{401, 402, 403, 429} {
++			t.Run(code+"/"+http.StatusText(status), func(t *testing.T) {
++				const message = "synthetic credential failure"
++				_, rpcFailure := decodeEnvelopeResult[pluginapi.ExecutorResponse](pluginabi.Envelope{Error: &pluginabi.Error{Code: code, Message: message, HTTPStatus: status}})
++				streamFailure := newStreamCallbackError(message, &pluginapi.HostStreamErrorDetails{HTTPStatus: status, Code: code, RequestScoped: true, Scope: "request"})
++				for name, failure := range map[string]error{"rpc": rpcFailure, "stream": streamFailure} {
++					t.Run(name, func(t *testing.T) {
++						var scoped coreexecutor.RequestScopedError
++						if !errors.As(failure, &scoped) || scoped.IsRequestScoped() {
++							t.Fatalf("credential status %d was exempted by request hint: %v", status, failure)
++						}
++						executor := &streamCallbackFixtureExecutor{fakeProviderExecutor: fakeProviderExecutor{provider: "callback-fixture"}, failure: failure}
++						manager, ids := streamCallbackFixtureManager(t, executor, 1)
++						_, err := manager.Execute(context.Background(), []string{executor.Identifier()}, coreexecutor.Request{Model: "callback-model"}, coreexecutor.Options{})
++						if err == nil {
++							t.Fatal("expected credential failure")
++						}
++						auth, _ := manager.GetByID(ids[0])
++						state := auth.ModelStates["callback-model"]
++						if state == nil || !state.Unavailable || !state.NextRetryAfter.After(state.UpdatedAt) {
++							t.Fatalf("credential status %d lost cooldown: %+v", status, state)
++						}
++					})
++				}
++			})
++		}
++	}
++}
+diff --git a/sdk/pluginapi/http_callbacks.go b/sdk/pluginapi/http_callbacks.go
+new file mode 100644
+index 00000000..51dbbb96
+--- /dev/null
++++ b/sdk/pluginapi/http_callbacks.go
+@@ -0,0 +1,19 @@
++package pluginapi
++
++// HostHTTPErrorDetails describes a typed callback transport failure, never an
++// upstream HTTP response. Callers opt in with error_details_supported: true.
++// Kind identifies the source; Code and HTTPStatus preserve the request fault.
++// This metadata does not itself change scheduling for any plugin.
++type HostHTTPErrorDetails struct {
++	Kind       string `json:"kind"`
++	Code       string `json:"code"`
++	HTTPStatus int    `json:"http_status"`
++}
++
++// HostHTTPErrorResult is returned inside a successful RPC envelope on opted-in
++// HTTP callback failure. The HTTP operation still failed; no stream was opened.
++// Legacy callers keep receiving an RPC error instead of this result.
++type HostHTTPErrorResult struct {
++	Error        string                `json:"error"`
++	ErrorDetails *HostHTTPErrorDetails `json:"error_details,omitempty"`
++}
+diff --git a/sdk/pluginapi/stream_callbacks.go b/sdk/pluginapi/stream_callbacks.go
+new file mode 100644
+index 00000000..f82a01b8
+--- /dev/null
++++ b/sdk/pluginapi/stream_callbacks.go
+@@ -0,0 +1,36 @@
++package pluginapi
++
++import "time"
++
++// HostStreamErrorDetails preserves scheduling semantics for plugin stream errors.
++// RetryAt uses RFC3339 timestamps on the wire. The legacy error string remains
++// the human-readable message and is supported without this object.
++type HostStreamErrorDetails struct {
++	HTTPStatus int    `json:"http_status,omitempty"`
++	Code       string `json:"code,omitempty"`
++	// Scope accepts "credential" or "account" for credential-wide failures.
++	Scope         string     `json:"scope,omitempty"`
++	RetryAt       *time.Time `json:"retry_at,omitempty"`
++	RequestScoped bool       `json:"request_scoped,omitempty"`
++	Phase         string     `json:"phase,omitempty"`
++}
++
++// HostStreamEmitRequest appends output or a typed error to a plugin stream.
++type HostStreamEmitRequest struct {
++	StreamID     string                  `json:"stream_id"`
++	Payload      []byte                  `json:"payload,omitempty"`
++	Error        string                  `json:"error,omitempty"`
++	ErrorDetails *HostStreamErrorDetails `json:"error_details,omitempty"`
++}
++
++// HostStreamCloseRequest closes a plugin stream after its pending output.
++type HostStreamCloseRequest struct {
++	StreamID     string                  `json:"stream_id"`
++	Error        string                  `json:"error,omitempty"`
++	ErrorDetails *HostStreamErrorDetails `json:"error_details,omitempty"`
++}
++
++// HostStreamCallbackResponse advertises structured stream error support.
++type HostStreamCallbackResponse struct {
++	ErrorDetailsSupported bool `json:"error_details_supported"`
++}
+diff --git a/sdk/pluginapi/stream_callbacks_test.go b/sdk/pluginapi/stream_callbacks_test.go
+new file mode 100644
+index 00000000..c134b163
+--- /dev/null
++++ b/sdk/pluginapi/stream_callbacks_test.go
+@@ -0,0 +1,45 @@
++package pluginapi
++
++import (
++	"encoding/json"
++	"testing"
++	"time"
++)
++
++func TestHostStreamErrorDetailsWireCompatibility(t *testing.T) {
++	const legacy = `{"stream_id":"fixture","error":"truncated response"}`
++	var request HostStreamCloseRequest
++	if err := json.Unmarshal([]byte(legacy), &request); err != nil || request.ErrorDetails != nil || request.Error != "truncated response" {
++		t.Fatalf("legacy string request changed: %+v, error = %v", request, err)
++	}
++	encoded, err := json.Marshal(request)
++	if err != nil || string(encoded) != legacy {
++		t.Fatalf("legacy request wire format changed: %s, error = %v", encoded, err)
++	}
++	retryAt := time.Date(2026, 10, 13, 1, 2, 3, 0, time.UTC)
++	request.ErrorDetails = &HostStreamErrorDetails{
++		HTTPStatus: 502, Code: "upstream_transport_incomplete", Scope: "request",
++		RetryAt: &retryAt, RequestScoped: true, Phase: "stream",
++	}
++	encoded, err = json.Marshal(request)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// Emit and close share the same error contract, including RFC3339 time.
++	var emit HostStreamEmitRequest
++	if err := json.Unmarshal(encoded, &emit); err != nil {
++		t.Fatal(err)
++	}
++	details := emit.ErrorDetails
++	if emit.Error != request.Error || details == nil || details.HTTPStatus != 502 || details.Code != request.ErrorDetails.Code || details.Scope != "request" || !details.RequestScoped || details.Phase != "stream" || details.RetryAt == nil || !details.RetryAt.Equal(retryAt) {
++		t.Fatalf("structured callback error changed on the wire: %+v", emit)
++	}
++	var wire struct {
++		Details struct {
++			RetryAt string `json:"retry_at"`
++		} `json:"error_details"`
++	}
++	if err := json.Unmarshal(encoded, &wire); err != nil || wire.Details.RetryAt != "2026-10-13T01:02:03Z" {
++		t.Fatalf("retry_at must use RFC3339: %s, error = %v", encoded, err)
++	}
++}
+diff --git a/sdk/pluginapi/types.go b/sdk/pluginapi/types.go
+index b1bd3686..a57777d2 100644
+--- a/sdk/pluginapi/types.go
++++ b/sdk/pluginapi/types.go
+@@ -748,6 +748,14 @@ type HostRecentRequestEntry struct {
+ 	Failed int64 `json:"failed"`
+ }
+ 
++// HostAuthModelState exposes scheduling state without credential metadata or errors.
++type HostAuthModelState struct {
++	Status         string    `json:"status"`
++	StatusMessage  string    `json:"status_message"`
++	Unavailable    bool      `json:"unavailable"`
++	NextRetryAfter time.Time `json:"next_retry_after,omitempty"`
++}
++
+ // HostAuthFileEntry describes one credential exposed through host auth callbacks.
+ type HostAuthFileEntry struct {
+ 	// ID identifies the credential record.
+@@ -770,6 +778,15 @@ type HostAuthFileEntry struct {
+ 	Disabled bool `json:"disabled,omitempty"`
+ 	// Unavailable reports whether the credential is currently unavailable.
+ 	Unavailable bool `json:"unavailable,omitempty"`
++	// ModelStatesAvailable distinguishes runtime model state support from older hosts.
++	// It is true even when the runtime model state map is empty.
++	ModelStatesAvailable bool `json:"model_states_available"`
++	// ModelStates contains only the public scheduling projection for each model.
++	ModelStates map[string]HostAuthModelState `json:"model_states"`
++	// CredentialCooldown reports a live credential-wide deadline, excluding aggregate model cooldowns.
++	CredentialCooldown bool `json:"credential_cooldown"`
++	// CredentialBlocked reports a terminal credential authentication failure.
++	CredentialBlocked bool `json:"credential_blocked"`
+ 	// RuntimeOnly reports whether the credential has no backing auth file.
+ 	RuntimeOnly bool `json:"runtime_only,omitempty"`
+ 	// Source reports whether the credential came from file or memory.

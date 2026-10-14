@@ -184,6 +184,21 @@
     .auth-panel { grid-column: 1 / -1; }
     .auth-panel .panel-hint { max-width: 880px; }
     .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .request-settings-head { flex-wrap: wrap; }
+    .request-settings-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+    .retry-compat-control { display: flex; align-items: center; gap: 4px; }
+    .retry-compat-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+    .retry-compat-switch input { appearance: none; width: 30px; height: 18px; border: 1px solid var(--line); border-radius: 20px; background: var(--inset-bg); cursor: pointer; position: relative; margin: 0; flex-shrink: 0; }
+    .retry-compat-switch input::before { content: ''; position: absolute; width: 12px; height: 12px; top: 2px; left: 2px; border-radius: 50%; background: var(--muted); transition: transform 120ms ease; }
+    .retry-compat-switch input:checked { background: var(--accent); border-color: var(--accent); }
+    .retry-compat-switch input:checked::before { background: white; transform: translateX(12px); }
+    .retry-compat-switch input:focus-visible, .retry-info-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .retry-info-button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; padding: 5px; }
+    .retry-info-button:hover { background: var(--inset-bg); color: var(--ink); }
+    .retry-info-button svg { width: 18px; height: 18px; }
+    #retryCompatibilityDialog { width: min(440px, calc(100vw - 32px)); }
+    #retryCompatibilityDialog p { color: var(--muted); line-height: 1.8; margin: 0 0 12px; }
+    @media (prefers-reduced-motion: reduce) { .retry-compat-switch input::before { transition: none; } }
     .panel-hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .model-row { justify-content: space-between; border-radius: 8px; background: var(--inset-bg); padding: 14px; min-width: 0; }
     #modelList, #pinModelList { display: grid; gap: 10px; }
@@ -596,7 +611,16 @@
     <section id="configPanel" role="tabpanel" aria-labelledby="configTab" hidden>
       <div class="config-grid">
         <div class="panel">
-          <div class="panel-head"><div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div><button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button></div>
+          <div class="panel-head request-settings-head">
+            <div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div>
+            <div class="request-settings-actions">
+              <div class="retry-compat-control">
+                <label class="retry-compat-switch" for="clientRetryCompatibility"><span>重试兼容</span><input id="clientRetryCompatibility" type="checkbox" role="switch" form="settingsForm" checked></label>
+                <button class="retry-info-button" id="openRetryCompatibilityHelp" type="button" aria-label="重试兼容说明" aria-haspopup="dialog" aria-controls="retryCompatibilityDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".8" fill="currentColor" stroke="none"/></svg></button>
+              </div>
+              <button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button>
+            </div>
+          </div>
           <form class="form-stack" id="settingsForm">
             <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
             <div class="field"><label for="timeoutSeconds">请求总时长上限（秒）</label><input class="control" id="timeoutSeconds" type="number" min="10" max="1800" step="1" required><div class="panel-hint">包含思考与输出，新装默认 600 秒。旧设置若为 180 秒，长任务可调至 600 秒或更高。</div></div>
@@ -612,6 +636,13 @@
       </div>
     </section>
   </main>
+
+  <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
+    <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus>关闭</button></div>
+    <p>将 Fireworks / LiteLLM 的响应截断错误返回为干净的 502，避免原版 DSH 等客户端被报错中的嵌套 400 误导，便于自动重试。</p>
+    <p>默认开启。关闭后返回原始报错；完整错误始终保留在请求日志中。是否重试及重试次数由客户端决定。</p>
+    <p>调整后点击「保存设置」生效。</p>
+  </dialog>
 
   <dialog id="egressGuideDialog" aria-labelledby="egressGuideTitle">
     <div class="egress-guide-head"><h2 id="egressGuideTitle">代理池使用指南</h2><button class="button compact" id="closeEgressGuide" type="button" autofocus>关闭</button></div>
@@ -1082,8 +1113,22 @@
     }
     function requestCacheRate(log) {
       const input = log.prompt_tokens, cached = log.cached_tokens;
-      if (log.upstream_skipped === true || !Number.isFinite(input) || input <= 0 || !Number.isFinite(cached) || cached < 0 || cached > input) return '—';
+      if (log.upstream_skipped === true || !logUsageReported(log, 'prompt') || !Number.isFinite(input) || input <= 0 || !Number.isFinite(cached) || cached < 0 || cached > input) return '—';
       return percent(cached / input);
+    }
+    function logUsageReported(log, side) {
+      if (log.upstream_skipped === true) return true;
+      const flag = log[`${side}_usage_reported`];
+      if (typeof flag === 'boolean') return flag;
+      if (log.usage_reported === true) return true;
+      return Number.isFinite(log[`${side}_tokens`]) && log[`${side}_tokens`] > 0;
+    }
+    function logTokenValue(log, field) {
+      const side = field === 'completion_tokens' ? 'completion' : 'prompt';
+      return logUsageReported(log, side) ? number(log[field]) : '未报告';
+    }
+    function logCooldownText(log) {
+      return { exempt: '未触发冷却', host_policy: '按错误规则处理', legacy_host_unknown: '处理结果未确认' }[log.cooldown_disposition] || '未记录';
     }
     function actualProvider(value, upstreamSkipped = false) {
       if (upstreamSkipped === true) return '本地退避';
@@ -1102,15 +1147,17 @@
       const lastTime = log.last_time || log.time;
       const teamLimited = log.error_kind === 'upstream_team_rate_limited';
       const limited = teamLimited || log.error_kind === 'upstream_rate_limited';
+      const incomplete = log.error_kind === 'upstream_transport_incomplete';
       const remaining = Math.max(0, Math.ceil((Date.parse(log.retry_at) - Date.now()) / 1000));
       const limitName = teamLimited ? '上游团队限流' : '请求限流';
-      const limitLabel = limited ? (remaining > 0 ? `${limitName}，${remaining} 秒后可重试` : limitName) : '';
+      const limitLabel = limited ? (remaining > 0 ? `${limitName}，${remaining} 秒后可重试` : limitName) : incomplete ? `上游响应截断 · ${logCooldownText(log)}` : '';
       const actual = shown(actualProvider(log.provider, log.upstream_skipped), '未知');
       const credential = present(log.credential) ? log.credential : present(log.credential_id) ? log.credential_id : '—';
       const attempts = !local && Array.isArray(log.attempts) ? log.attempts.filter((attempt) => attempt.upstream_skipped !== true) : [];
       const upstreamAttempts = local ? 0 : Number.isInteger(log.upstream_attempt_count) && log.upstream_attempt_count >= 0 ? log.upstream_attempt_count : attempts.length;
       const duration = local ? '—' : formatLogDuration(log.duration_ms);
-      const speed = local ? '—' : tokenRate(log.output_tokens_per_second);
+      const speed = local || !logUsageReported(log, 'completion') ? '—' : tokenRate(log.output_tokens_per_second);
+      const usageTitle = logUsageReported(log, 'prompt') && logUsageReported(log, 'completion') ? '输入 / 输出 tokens' : '上游未报告完整用量；已生成内容的请求仍可能产生消耗';
       const attemptMarkup = attempts.length ? attempts.map((attempt, index) => {
         const attemptStatus = statusInfo(attempt.status);
         return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><span>${formatLogDuration(attempt.duration_ms)}</span><span class="error-text">${shown(attempt.error, '—')}</span></div>`;
@@ -1119,11 +1166,11 @@
         <div class="cell"><span class="cell-label">时间</span><div class="primary-text mono">${local ? '首 ' : ''}${formatTime(log.time)}</div>${local ? `<div class="subtext mono">末 ${formatTime(lastTime)}</div>` : ''}</div>
         <div class="cell log-model"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono" title="${esc(log.model || '')}">${shown(log.model)}</div><div class="subtext mono" title="${esc(log.upstream_model || '')}">${shown(log.upstream_model)}</div></div>
         <div class="cell"><span class="cell-label">思考强度</span><span class="badge reasoning-badge" title="${log.reasoning_mapping ? (local ? '映射已计算；本次被本地退避拦截，未发往上游' : '插件收到的强度 → 发往上游的强度') : '未应用插件映射；— 表示未识别到显式强度'}">${esc(reasoningText(log))}</span></div>
-        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
+        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : incomplete ? '响应截断' : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
         <div class="cell"><span class="cell-label">凭据</span><div class="primary-text truncate" title="${esc(credential)}">${esc(credential)}</div></div>
         <div class="cell"><span class="cell-label">实际上游</span><div class="primary-text truncate" title="${actual}">${actual}</div></div>
         <div class="cell"><span class="cell-label">首字 / 耗时</span><div class="log-latency">${latencyLine('首字', log.ttft_ms, 'ttft', local, log.completion_tokens)}${latencyLine('耗时', log.duration_ms, 'duration', local, log.completion_tokens)}</div></div>
-        <div class="cell"><span class="cell-label">用量</span><div class="log-usage" title="输入 / 输出 tokens"><span>${number(log.prompt_tokens)}</span><span>/ ${number(log.completion_tokens)}</span></div><div class="subtext log-usage"><span>缓存 ${number(log.cached_tokens)}</span><span class="log-cache-rate" title="本条请求缓存命中率 = 缓存 tokens ÷ 输入 tokens；没有有效输入用量或未调用上游时显示 —。">(${requestCacheRate(log)})</span><span class="log-speed" title="输出 tokens ÷（总耗时 − 首字时间）；首字未记录时使用总耗时。直接展示服务端原始速率，不应用平均速率的 0.5 秒阈值。">· ${speed}</span></div></div>
+        <div class="cell"><span class="cell-label">用量</span><div class="log-usage" title="${esc(usageTitle)}"><span>${logTokenValue(log, 'prompt_tokens')}</span><span>/ ${logTokenValue(log, 'completion_tokens')}</span></div><div class="subtext log-usage"><span>缓存 ${logTokenValue(log, 'cached_tokens')}</span><span class="log-cache-rate" title="本条请求缓存命中率 = 缓存 tokens ÷ 输入 tokens；没有有效输入用量或未调用上游时显示 —。">(${requestCacheRate(log)})</span><span class="log-speed" title="输出 tokens ÷（总耗时 − 首字时间）；首字未记录时使用总耗时。直接展示服务端原始速率，不应用平均速率的 0.5 秒阈值。">· ${speed}</span></div></div>
         <span class="chevron" aria-hidden="true">›</span></summary>
         <div class="detail"><div class="detail-head"><strong>请求详情</strong></div>
           <div class="detail-grid">
@@ -1136,9 +1183,14 @@
             ${datum('首字时间', ttft(log), '—')}
             ${datum('总耗时', duration, '—')}
             ${datum('输出速率', speed, '—')}
-            ${datum('输入 tokens', number(log.prompt_tokens), '--')}
-            ${datum('输出 tokens', number(log.completion_tokens), '--')}
-            ${datum('缓存 tokens', number(log.cached_tokens), '--')}
+            ${datum('输入 tokens', logTokenValue(log, 'prompt_tokens'), '--')}
+            ${datum('输出 tokens', logTokenValue(log, 'completion_tokens'), '--')}
+            ${datum('缓存 tokens', logTokenValue(log, 'cached_tokens'), '--')}
+            ${present(log.error_phase) ? datum('错误阶段', log.error_phase === 'after_output' ? '输出开始后' : '输出开始前') : ''}
+            ${typeof log.downstream_started === 'boolean' ? datum('下游输出', log.downstream_started ? '已开始' : '未开始') : ''}
+            ${present(log.last_effective_frame_at) ? datum('最后有效输出', formatTime(log.last_effective_frame_at)) : ''}
+            ${present(log.effective_frame_count) ? datum('有效输出帧', number(log.effective_frame_count)) : ''}
+            ${present(log.cooldown_disposition) ? datum('冷却处理', logCooldownText(log)) : ''}
             ${local ? datum('本地拦截', `${number(count)} 次`) + datum('首次拦截', formatTime(log.time)) + datum('最近拦截', formatTime(lastTime)) + datum('退避窗口 ID', log.backoff_window_id, '—') : ''}
             ${limited ? datum('重试状态', limitLabel) + datum('限流范围', log.rate_limit_scope === 'upstream_team' ? '上游团队' : '当前凭据 / 模型') : ''}
           </div>
@@ -1775,6 +1827,7 @@
         state.config = config || {};
         $('nonstreamMode').value = ['native', 'native-fallback', 'stream-aggregate'].includes(config?.nonstream_mode) ? config.nonstream_mode : 'stream-aggregate';
         dropdowns.get('nonstreamMode').sync();
+        $('clientRetryCompatibility').checked = config?.client_retry_compatibility !== false;
         $('providerPolicy').value = config?.provider_policy === 'client' ? 'client' : 'config';
         dropdowns.get('providerPolicy').sync();
         $('timeoutSeconds').value = present(config?.timeout_seconds) ? config.timeout_seconds : 600;
@@ -1802,6 +1855,8 @@
       else loadStatistics();
     }
     $('openPinEvidence').addEventListener('click', () => $('pinEvidenceDialog').showModal());
+    $('openRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').showModal());
+    $('closeRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').close());
     $('logsTab').addEventListener('click', () => setTab('logs'));
     $('pinTab').addEventListener('click', () => setTab('pin'));
     $('configTab').addEventListener('click', () => setTab('config'));
@@ -2177,7 +2232,7 @@
         $('settingsState').textContent = '超时需为 10–1800 秒，日志保留需为 50–10000 条';
         return;
       }
-      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention };
+      const next = { nonstream_mode: $('nonstreamMode').value, client_retry_compatibility: $('clientRetryCompatibility').checked, timeout_seconds, log_retention };
       $('saveSettings').disabled = true;
       $('settingsState').textContent = '正在保存…';
       try { state.config = await api('/config', { method: 'PUT', body: next }); $('settingsState').textContent = '设置已保存'; }

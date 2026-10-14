@@ -96,6 +96,71 @@ func TestSchedulingQuotaManualStateAndHostProjection(t *testing.T) {
 	}
 }
 
+func TestSchedulingModelCooldownDoesNotHideOtherModels(t *testing.T) {
+	s := NewService()
+	quotaTestAuth(t, s, Credential{ID: "one", APIKey: "fixture-key"})
+	s.cfg.Models = []Model{{ID: "flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "kimi", UpstreamID: "cline-pass/kimi-k3"}}
+	now := time.Now().UTC()
+	s.SetHost(func(method string, _, out any) error {
+		if method != "host.auth.list" {
+			t.Fatalf("unexpected callback: %s", method)
+		}
+		return json.Unmarshal(jsonBytes(map[string]any{"files": []map[string]any{{
+			"name": "one.json", "provider": Provider, "unavailable": true,
+			"model_states_available": true, "model_states": map[string]any{
+				"cline-pass/flash": map[string]any{"unavailable": true, "next_retry_after": now.Add(time.Hour), "status_message": "upstream temporary failure"},
+				"expired":          map[string]any{"unavailable": true, "next_retry_after": now.Add(-time.Hour)},
+			},
+		}}}), out)
+	})
+	result, err := s.schedulingResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Accounts []struct {
+			ModelCooldowns []struct {
+				Model string `json:"model"`
+			} `json:"model_cooldowns"`
+		} `json:"accounts"`
+		Summary map[string]int `json:"summary"`
+	}
+	if err := json.Unmarshal(result.(ManagementResponse).Body, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Summary["available"] != 1 || len(state.Accounts) != 1 || len(state.Accounts[0].ModelCooldowns) != 1 || state.Accounts[0].ModelCooldowns[0].Model != "flash" {
+		t.Fatalf("model cooldown was expanded to the account: %s", result.(ManagementResponse).Body)
+	}
+	models := s.cfg.Models
+	rows := []map[string]any{{"model": "flash"}, {"model": "kimi"}}
+	if schedulingAccountAvailable(&schedulingHostAuth{ModelStatesAvailable: true}, models, rows, nil) {
+		t.Fatal("all configured models are cooling")
+	}
+	if schedulingAccountAvailable(&schedulingHostAuth{ModelStatesAvailable: true, CredentialCooldown: true}, models, nil, nil) {
+		t.Fatal("credential cooldown was ignored")
+	}
+	if schedulingAccountAvailable(&schedulingHostAuth{ModelStatesAvailable: true, CredentialBlocked: true}, models, nil, nil) {
+		t.Fatal("terminal authentication failure was ignored")
+	}
+	if schedulingAccountAvailable(&schedulingHostAuth{Unavailable: true}, models, nil, nil) {
+		t.Fatal("legacy host availability must remain conservative")
+	}
+}
+
+func TestSchedulingSharedUpstreamKeepsHostAliasScope(t *testing.T) {
+	models := []Model{{ID: "alias-a", UpstreamID: "shared"}, {ID: "alias-b", UpstreamID: "shared"}}
+	runtime := &schedulingHostAuth{ModelStatesAvailable: true, ModelStates: map[string]schedulingModelState{
+		"alias-a": {Unavailable: true, NextRetryAfter: time.Now().Add(time.Hour)},
+	}}
+	rows := schedulingModelCooldowns(runtime, models, time.Now())
+	if !schedulingAccountAvailable(runtime, models, rows, nil) || len(rows) != 1 || rows[0]["model"] != "alias-a" {
+		t.Fatal("host alias cooldown blocked another alias with the same upstream")
+	}
+	if schedulingAccountAvailable(runtime, models, nil, []map[string]any{{"model": "shared"}}) {
+		t.Fatal("shared upstream team-rate window did not cover both aliases")
+	}
+}
+
 func TestSchedulingCredentialManualTogglePreservesQuotaBlock(t *testing.T) {
 	s := NewService()
 	c := Credential{ID: "one", APIKey: "quota-key"}

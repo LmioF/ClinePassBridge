@@ -10,15 +10,26 @@ import (
 // Deliberately decode only routing metadata. host.auth.list may include paths,
 // emails and identifiers that the scheduling console does not need.
 type schedulingHostAuth struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	AuthIndex      string    `json:"auth_index"`
-	Provider       string    `json:"provider"`
-	Type           string    `json:"type"`
-	Disabled       bool      `json:"disabled"`
-	Unavailable    bool      `json:"unavailable"`
+	ID                   string                          `json:"id"`
+	Name                 string                          `json:"name"`
+	AuthIndex            string                          `json:"auth_index"`
+	Provider             string                          `json:"provider"`
+	Type                 string                          `json:"type"`
+	Disabled             bool                            `json:"disabled"`
+	Unavailable          bool                            `json:"unavailable"`
+	Status               string                          `json:"status"`
+	Message              string                          `json:"status_message"`
+	NextRetryAfter       time.Time                       `json:"next_retry_after"`
+	ModelStatesAvailable bool                            `json:"model_states_available"`
+	CredentialCooldown   bool                            `json:"credential_cooldown"`
+	CredentialBlocked    bool                            `json:"credential_blocked"`
+	ModelStates          map[string]schedulingModelState `json:"model_states"`
+}
+
+type schedulingModelState struct {
 	Status         string    `json:"status"`
 	Message        string    `json:"status_message"`
+	Unavailable    bool      `json:"unavailable"`
 	NextRetryAfter time.Time `json:"next_retry_after"`
 }
 
@@ -33,6 +44,10 @@ func (s *Service) schedulingHostAuths() ([]schedulingHostAuth, error) {
 	for _, entry := range response.Files {
 		if entry.Provider == Provider || entry.Type == Provider {
 			entry.Message = safeError(errors.New(entry.Message))
+			for model, state := range entry.ModelStates {
+				state.Message = safeError(errors.New(state.Message))
+				entry.ModelStates[model] = state
+			}
 			result = append(result, entry)
 		}
 	}

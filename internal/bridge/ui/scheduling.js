@@ -1,7 +1,7 @@
 // This module shares the console's authenticated API client and theme.
 const schedulingView = { dirty: false, data: null, egress: null, loading: false, saving: false, editing: '', revision: 0 };
 const schedulingTime = (value) => value ? new Date(value).toLocaleString() : '—';
-function schedulingBadge(label, tone = '') { return `<span class="badge ${tone}">${esc(label)}</span>`; }
+function schedulingBadge(label, tone = '', title = '') { return `<span class="badge ${tone}"${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</span>`; }
 const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, refreshQueued: false, revision: 0 };
 function credentialSchedule(id) { return credentialScheduling.accounts.get(id); }
 function credentialQuotaPaused(item) { return credentialSchedule(item.id)?.quota_blocked ?? !!item.quota_paused; }
@@ -20,6 +20,27 @@ function credentialToggleHTML(item) {
   const state = credentialToggleState(item);
   return `<label class="credential-toggle" title="${esc(state.title)}"><span class="credential-toggle-label">${state.label}</span><input type="checkbox" role="switch" class="credential-enabled" data-id="${esc(item.id)}" aria-label="${esc(item.label || item.id)} ${state.label}" ${state.checked ? 'checked' : ''} ${state.disabled ? 'disabled' : ''}><span class="toggle-track" aria-hidden="true"></span></label>`;
 }
+function credentialModelCooldowns(account) {
+  const rows = [...(account?.model_cooldowns || []), ...(account?.backoffs || [])];
+  const active = new Map();
+  for (const row of rows) {
+    if (!row.model || (!(Date.parse(row.retry_at) > Date.now()) && !row.probing)) continue;
+    const key = row.model;
+    const current = active.get(key);
+    if (!current || Date.parse(row.retry_at) > Date.parse(current.retry_at)) active.set(key, { ...row, model: current?.model || row.model });
+  }
+  return [...active.values()];
+}
+function schedulingReason(message) {
+  const text = String(message || '');
+  if (/TransferEncodingError|Not enough data to satisfy transfer length header/i.test(text)) return '上游响应截断';
+  if (/\[clinepassbridge:team_tpm_limit\]/.test(text)) return '上游团队限流';
+  if (/\[clinepassbridge:ip_rate_limit\]/.test(text)) return '出口 IP 限流';
+  if (/empty response content/i.test(text)) return '上游返回空内容';
+  if (/context canceled|client disconnected/i.test(text)) return '客户端已断开';
+  const firstLine = text.split(/\r?\n/)[0];
+  return firstLine.length > 72 ? `${firstLine.slice(0, 72)}…` : firstLine;
+}
 function credentialScheduleBadges(item) {
   const a = credentialSchedule(item.id), badges = [];
   if (item.enabled === false) badges.push(schedulingBadge('人工停用'));
@@ -28,16 +49,21 @@ function credentialScheduleBadges(item) {
   if (item.enabled !== false && !credentialQuotaPaused(item)) {
     if (!a) badges.push(schedulingBadge('调度状态待查询'));
     else if (a.host?.disabled) badges.push(schedulingBadge('宿主停用', 'warn'));
-    else if (a.host?.unavailable || a.backoffs?.length) badges.push(schedulingBadge('冷却中', 'warn'));
+    else if (a.host?.credential_blocked) badges.push(schedulingBadge('鉴权失效', 'bad'));
+    else if (a.host?.credential_cooldown) badges.push(schedulingBadge('账号冷却', 'warn'));
+    else if (credentialModelCooldowns(a).length) badges.push(schedulingBadge('模型冷却', 'warn', '只影响列出的模型，其他模型按原有资格调度'));
+    else if (a.host?.unavailable && !a.host?.model_states_available) badges.push(schedulingBadge('调度受限', 'warn', '当前状态未提供模型范围'));
     else badges.push(schedulingBadge('参与调度', 'good'));
   }
   return badges.join('');
 }
 function credentialScheduleDetail(item) {
   const a = credentialSchedule(item.id); if (!a) return '';
-  const reason = [a.quota_reason || a.host?.message || '', a.persistence_error ? `状态保存失败：${a.persistence_error}` : ''].filter(Boolean).join(' · ');
-  const retry = a.retry_at || a.host?.next_retry_after;
-  return `${reason ? `<span class="subtext" title="${esc(reason)}">${esc(reason)}</span>` : ''}${retry ? `<span class="subtext">${a.quota_blocked ? '额度复查' : '冷却至'} ${esc(schedulingTime(retry))}</span>` : ''}${(a.backoffs || []).map(w => `<span class="subtext">${esc(w.model)} · 冷却至 ${esc(schedulingTime(w.retry_at))}</span>`).join('')}`;
+  const models = credentialModelCooldowns(a);
+  const reason = [a.quota_reason || (!models.length ? a.host?.message || '' : ''), a.persistence_error ? `状态保存失败：${a.persistence_error}` : ''].filter(Boolean).join(' · ');
+  const retry = a.retry_at || (a.host?.credential_cooldown || !a.host?.model_states_available ? a.host?.next_retry_after : null);
+  const activeRetry = retry && (a.quota_blocked || Date.parse(retry) > Date.now());
+  return `${reason ? `<span class="subtext" title="${esc(reason)}">${esc(schedulingReason(reason))}</span>` : ''}${activeRetry ? `<span class="subtext">${a.quota_blocked ? '额度复查' : '冷却至'} ${esc(schedulingTime(retry))}</span>` : ''}${models.map(w => `<span class="subtext" title="${esc(w.message || '')}">${esc(w.model)} · ${w.probing ? '恢复探测中' : `冷却至 ${esc(schedulingTime(w.retry_at))}`}${w.message ? ` · ${esc(schedulingReason(w.message))}` : ''}</span>`).join('')}`;
 }
 function updateCredentialScheduling() {
   for (const row of $('credentialList').children) {

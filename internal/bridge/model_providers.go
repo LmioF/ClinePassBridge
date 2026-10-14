@@ -86,7 +86,7 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	}
 	duration := time.Since(start).Milliseconds()
 	_ = s.observeQuotaError(credential, err)
-	lease.finish(err)
+	finishRequestRateLease(lease, err)
 	logErrorDetails(&entry, &attempt, err)
 	attempt.Status, attempt.DurationMS = statusOf(err), duration
 	entry.Status, entry.DurationMS = attempt.Status, duration

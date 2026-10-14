@@ -12,6 +12,7 @@ import (
 )
 
 const rateLimitMarker = "[clinepassbridge:team_tpm_limit]"
+const transportIncompleteKind = "upstream_transport_incomplete"
 
 var wrappedRateLimit = regexp.MustCompile(`(?is)request failed with status 429:\s*.*rate limit exceeded`)
 var retrySecondsPattern = regexp.MustCompile(`(?i)retry after\s+(\d+(?:\.\d+)?)\s*s\b`)
@@ -35,6 +36,36 @@ type upstreamError struct {
 	ProviderSource string
 	QuotaType      string
 	QuotaResetAt   *time.Time
+}
+
+func (e *upstreamError) IsRequestScoped() bool {
+	if e == nil || e.Status == 401 || e.Status == 402 || e.Status == 403 || e.Status == 429 {
+		return false
+	}
+	switch e.Kind {
+	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind:
+		return true
+	default:
+		return false
+	}
+}
+
+// Only the provider APIConnectionError with an explicit truncated-response
+// signature is exempt. A generic 502, EOF or connection error is insufficient.
+func isProviderTransportIncomplete(body map[string]any) bool {
+	detail := object(body["error"])
+	text := strings.ToLower(errorMessage(body))
+	identity := text + " " + strings.ToLower(str(detail["code"])+" "+str(detail["type"]))
+	provider, _ := routingFacts(body)
+	if !strings.Contains(identity, "apiconnectionerror") ||
+		(!strings.Contains(identity, "fireworks") && !strings.Contains(identity, "litellm") && !strings.Contains(strings.ToLower(provider), "fireworks")) {
+		return false
+	}
+	return strings.Contains(text, "transferencodingerror") ||
+		strings.Contains(text, "response payload is not completed") ||
+		strings.Contains(text, "response payload incomplete") ||
+		strings.Contains(text, "response payload is incomplete") ||
+		strings.Contains(text, "upstream payload incomplete")
 }
 
 // responseRoutingProvider recovers the provider from explicit routing metadata.
@@ -115,6 +146,9 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 		result.QuotaResetAt = quotaResetTime(headers, message, now)
 	case status == 401 || status == 403:
 		kind = "upstream_auth_error"
+	case status != 402 && isProviderTransportIncomplete(body):
+		status, result.UpstreamStatus, kind = 502, 502, transportIncompleteKind
+		result.Scope = "request"
 	}
 	result.APIError = &APIError{Status: status, Kind: kind, Message: message}
 	result.Provider, result.ProviderSource = routingFacts(body)
@@ -160,6 +194,21 @@ func asTeamRateLimit(err error) *upstreamError {
 }
 
 func logErrorDetails(entry *LogEntry, attempt *Attempt, err error) {
+	entry.ErrorPhase, entry.CooldownDisposition = "", ""
+	if err != nil {
+		entry.ErrorPhase = "before_output"
+		if entry.DownstreamStarted != nil && *entry.DownstreamStarted {
+			entry.ErrorPhase = "after_output"
+		}
+		entry.CooldownDisposition = "host_policy"
+		var scoped *upstreamError
+		if errors.As(err, &scoped) && scoped.IsRequestScoped() {
+			entry.CooldownDisposition = "legacy_host_unknown"
+			if entry.StreamErrorDetailsSupported != nil && *entry.StreamErrorDetailsSupported {
+				entry.CooldownDisposition = "exempt"
+			}
+		}
+	}
 	entry.ErrorKind, entry.RateLimitScope = "", ""
 	entry.UpstreamHTTPStatus, entry.UpstreamErrorStatus = 0, 0
 	entry.UpstreamSkipped, entry.RetryAt = false, nil

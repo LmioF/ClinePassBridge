@@ -32,6 +32,7 @@ func TestExecutorPreservesRequestNumbers(t *testing.T) {
 				case <-time.After(3 * time.Second):
 					t.Fatal("stream did not finish")
 				}
+				s.active.Wait()
 			}
 			var got struct {
 				Seed    json.RawMessage `json:"seed"`

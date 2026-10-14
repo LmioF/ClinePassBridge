@@ -184,6 +184,7 @@ func TestPreflightPreservesPreludeAndDoesNotReplayPartialOutput(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("stream did not terminate")
 	}
+	s.active.Wait()
 	if len(h.opened) != 1 || len(h.emitted) != 2 || !strings.Contains(h.clientError, rateLimitMarker) {
 		t.Fatalf("opens=%d frames=%d err=%s", len(h.opened), len(h.emitted), h.clientError)
 	}

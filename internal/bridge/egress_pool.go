@@ -246,9 +246,9 @@ func laterTime(a, b time.Time) time.Time {
 
 func egressContextError(ctx context.Context) error {
 	if context.Cause(ctx) == context.DeadlineExceeded || ctx.Err() == context.DeadlineExceeded {
-		return fail(504, "egress request deadline exceeded")
+		return requestTimedOut("egress request deadline exceeded")
 	}
-	return fail(499, "egress request canceled")
+	return requestCanceled("egress request canceled")
 }
 
 func (p *egressManager) bindContext(callback string, ctx context.Context) func() {

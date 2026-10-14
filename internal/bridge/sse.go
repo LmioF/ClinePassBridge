@@ -368,10 +368,18 @@ func observeMetadata(j map[string]any, entry *LogEntry, attempt *Attempt) {
 		if v, ok := u["prompt_tokens"]; ok && v != nil {
 			entry.PromptTokens = number(v)
 			entry.promptReported = true
+			if entry.PromptUsageReported == nil {
+				entry.PromptUsageReported = new(bool)
+			}
+			*entry.PromptUsageReported = true
 		}
 		if v, ok := u["completion_tokens"]; ok && v != nil {
 			entry.CompletionTokens = number(v)
 			entry.completionReported = true
+			if entry.CompletionUsageReported == nil {
+				entry.CompletionUsageReported = new(bool)
+			}
+			*entry.CompletionUsageReported = true
 		}
 		if entry.promptReported && entry.completionReported {
 			entry.UsageReported = true
@@ -402,6 +410,10 @@ func contentStarted(j map[string]any) bool {
 	return false
 }
 func isEmptyError(err error) bool {
+	var upstream *upstreamError
+	if errors.As(err, &upstream) && upstream.IsRequestScoped() {
+		return false
+	}
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "empty response content")
 }
 

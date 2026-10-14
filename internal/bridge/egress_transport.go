@@ -43,9 +43,9 @@ func (stream *egressLocalStream) read() (readChunk, error) {
 	}
 	if err != nil {
 		if stream.op.ctx.Err() != nil {
-			return readChunk{}, egressContextError(stream.op.ctx)
+			return readChunk{Payload: buffer[:n]}, egressContextError(stream.op.ctx)
 		}
-		return readChunk{}, fail(502, "egress upstream response interrupted")
+		return readChunk{Payload: buffer[:n]}, typedTransportFault(stream.op.ctx, err, "egress upstream response interrupted")
 	}
 	return readChunk{Payload: buffer[:n]}, nil
 }
@@ -154,18 +154,15 @@ func (s *Service) openEgress(payload any, deadline time.Time, diagnostics ...*mo
 	p.mu.Unlock()
 	response, err := client.Do(r)
 	if err != nil {
-		var contextFailure error
+		failure := typedTransportFault(op.ctx, err, "egress upstream transport failed; configured proxy was not bypassed")
 		if op.ctx.Err() != nil {
-			contextFailure = egressContextError(op.ctx)
+			failure = egressContextError(op.ctx)
 		}
 		lease.release()
 		p.finishOperation(op)
-		if contextFailure != nil {
-			return upstreamStream{}, true, contextFailure
-		}
 		// url.Error and dialer errors can contain proxy credentials. Do not pass
 		// their text to diagnostics, request logs, management responses or RPC.
-		return upstreamStream{}, true, fail(502, "egress upstream transport failed; configured proxy was not bypassed")
+		return upstreamStream{}, true, failure
 	}
 	local := &egressLocalStream{id: "egress:" + id(), pool: p, op: op, lease: lease, body: response.Body}
 	p.mu.Lock()

@@ -143,6 +143,7 @@ func TestEOFUsageReachesAggregateAndStreamingExecutors(t *testing.T) {
 				case <-time.After(3 * time.Second):
 					t.Fatal("plugin did not close client stream")
 				}
+				s.active.Wait()
 				h.mu.Lock()
 				emitted := append([][]byte(nil), h.emitted...)
 				closeError := h.clientError

@@ -124,7 +124,7 @@ func (s *Service) testModel(r ManagementRequest) (any, error) {
 	}
 	duration := time.Since(start).Milliseconds()
 	_ = s.observeQuotaError(credential, err)
-	lease.finish(err)
+	finishRequestRateLease(lease, err)
 	logErrorDetails(&entry, &attempt, err)
 	detail := ""
 	if err != nil {

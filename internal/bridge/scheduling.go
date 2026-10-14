@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +19,7 @@ func (s *Service) schedulingResponse() (any, error) {
 		creds = append(creds, c)
 	}
 	logs := append([]LogEntry(nil), s.logs...)
+	models := append([]Model(nil), s.cfg.Models...)
 	s.mu.RUnlock()
 	sortCredentials(creds)
 	accounts := []map[string]any{}
@@ -55,8 +57,10 @@ func (s *Service) schedulingResponse() (any, error) {
 		}
 		account["persistence_error"] = s.quotaStatus(c.ID)["persistence_error"]
 		runtime := s.schedulingAuthMatch(c, hostAuths)
+		cooldowns := schedulingModelCooldowns(runtime, models, time.Now().UTC())
+		account["model_cooldowns"] = cooldowns
 		if runtime != nil {
-			value := map[string]any{"disabled": runtime.Disabled, "unavailable": runtime.Unavailable, "status": runtime.Status, "message": runtime.Message}
+			value := map[string]any{"disabled": runtime.Disabled, "unavailable": runtime.Unavailable, "status": runtime.Status, "message": runtime.Message, "model_states_available": runtime.ModelStatesAvailable, "credential_cooldown": runtime.CredentialCooldown, "credential_blocked": runtime.CredentialBlocked}
 			if !runtime.NextRetryAfter.IsZero() {
 				value["next_retry_after"] = runtime.NextRetryAfter
 			}
@@ -64,12 +68,77 @@ func (s *Service) schedulingResponse() (any, error) {
 		}
 		if blocked {
 			summary["quota_blocked"]++
-		} else if !c.Disabled && len(windows) == 0 && (runtime == nil || (!runtime.Unavailable && !runtime.Disabled)) {
+		} else if !c.Disabled && schedulingAccountAvailable(runtime, models, cooldowns, windows) {
 			summary["available"]++
 		}
 		accounts = append(accounts, account)
 	}
 	return managementJSON(200, map[string]any{"observed_at": time.Now().UTC(), "quota_auto_pause": true, "accounts": accounts, "summary": summary, "host": host, "counts_scope": "retained_plugin_logs"})
+}
+
+// Expose only active model deadlines. Aggregate auth.Unavailable may describe a
+// single model and must not be presented as a credential-wide cooldown.
+func schedulingModelCooldowns(runtime *schedulingHostAuth, models []Model, now time.Time) []map[string]any {
+	rows := []map[string]any{}
+	if runtime == nil || !runtime.ModelStatesAvailable {
+		return rows
+	}
+	keys := make([]string, 0, len(runtime.ModelStates))
+	for key := range runtime.ModelStates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		state := runtime.ModelStates[key]
+		if !state.Unavailable || !state.NextRetryAfter.After(now) {
+			continue
+		}
+		name, upstream := strings.TrimPrefix(key, Provider+"/"), key
+		for _, model := range models {
+			if key == model.ID || key == Provider+"/"+model.ID {
+				name, upstream = model.ID, model.UpstreamID
+				break
+			}
+		}
+		rows = append(rows, map[string]any{"state_key": key, "model": name, "upstream_model": upstream, "retry_at": state.NextRetryAfter, "message": state.Message})
+	}
+	return rows
+}
+
+func schedulingAccountAvailable(runtime *schedulingHostAuth, models []Model, cooldowns, windows []map[string]any) bool {
+	if runtime != nil && (runtime.Disabled || runtime.CredentialCooldown || runtime.CredentialBlocked) {
+		return false
+	}
+	if runtime == nil || !runtime.ModelStatesAvailable || len(models) == 0 {
+		return len(windows) == 0 && (runtime == nil || !runtime.Unavailable)
+	}
+	for _, model := range models {
+		blocked := false
+		// Host penalties use the client model key; sharing an upstream does not
+		// make independently configured aliases share the host's penalty.
+		for _, row := range cooldowns {
+			key := str(row["state_key"])
+			if key == "" {
+				key = str(row["model"])
+			}
+			if key == model.ID || key == Provider+"/"+model.ID {
+				blocked = true
+				break
+			}
+		}
+		// Plugin team-rate windows are acquired using the upstream model key.
+		for _, row := range windows {
+			key := str(row["model"])
+			if key == model.ID || key == model.UpstreamID || key == Provider+"/"+model.ID {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			return true
+		}
+	}
+	return false
 }
 
 // Join public (redacted) configuration with group budgets for the console.

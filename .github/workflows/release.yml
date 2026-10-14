@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: '22'
       - name: Test management login reuse
-        run: node --test tests/cpa-auth.test.cjs
+        run: node --test tests/*.test.cjs
       - name: Check plugin and registry versions
         id: version
         shell: bash
@@ -204,11 +204,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: package-*
           merge-multiple: true
           path: dist
+      - name: Package companion CPA source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -j "dist/clinepassbridge_${{ needs.metadata.outputs.version }}_cpa_compatibility.zip" \
+            docs/cpa-compatibility.md compatibility/cpa-v8.0.13-stream-errors.patch
       - name: Verify all release archives and write checksums
         shell: bash
         run: |
@@ -233,5 +240,5 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/clinepassbridge_*.zip dist/checksums.txt --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$GITHUB_REF_NAME" dist/clinepassbridge_*.zip dist/checksums.txt --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY"
+            gh release create "$GITHUB_REF_NAME" dist/clinepassbridge_*.zip dist/checksums.txt --draft --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY"
           fi

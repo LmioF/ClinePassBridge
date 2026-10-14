@@ -11,17 +11,21 @@ import (
 )
 
 type upstreamStream struct {
-	local       *egressLocalStream
-	deadline    time.Time
-	diagnostics *modelTestDiagnostics
-	StatusCode  int         `json:"status_code"`
-	Headers     http.Header `json:"headers"`
-	StreamID    string      `json:"stream_id"`
+	local        *egressLocalStream
+	deadline     time.Time
+	diagnostics  *modelTestDiagnostics
+	callbackID   string
+	StatusCode   int               `json:"status_code"`
+	Headers      http.Header       `json:"headers"`
+	StreamID     string            `json:"stream_id"`
+	Error        string            `json:"error,omitempty"`
+	ErrorDetails *httpErrorDetails `json:"error_details,omitempty"`
 }
 type readChunk struct {
-	Payload []byte `json:"payload"`
-	Error   string `json:"error"`
-	Done    bool   `json:"done"`
+	Payload      []byte            `json:"payload"`
+	Error        string            `json:"error"`
+	ErrorDetails *httpErrorDetails `json:"error_details,omitempty"`
+	Done         bool              `json:"done"`
 }
 
 func (s *Service) prepare(r ExecutorRequest) (map[string]any, Credential, string, error) {
@@ -119,6 +123,16 @@ func (s *Service) request(r ExecutorRequest, c Credential, j map[string]any, str
 }
 
 func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*modelTestDiagnostics) (upstreamStream, error) {
+	callbackID := ""
+	if values, ok := payload.(map[string]any); ok {
+		copyPayload := make(map[string]any, len(values)+1)
+		for key, value := range values {
+			copyPayload[key] = value
+		}
+		copyPayload["error_details_supported"] = true
+		callbackID = str(values["host_callback_id"])
+		payload = copyPayload
+	}
 	if deadline.IsZero() {
 		deadline = time.Now().Add(time.Duration(s.config().TimeoutSeconds) * time.Second)
 	}
@@ -154,17 +168,22 @@ func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*
 		if len(diagnostics) > 0 {
 			out.diagnostics = diagnostics[0]
 		}
-		if result.err != nil {
-			out.diagnostics.transportError(result.err.Error())
+		if result.err != nil || out.Error != "" || out.ErrorDetails != nil {
+			if result.err == nil && out.Error != "" {
+				result.err = errors.New(out.Error)
+			}
+			failure := hostHTTPFault(result.err, out.ErrorDetails, "upstream transport failed")
+			out.diagnostics.transportError(callbackTransportDiagnostic(result.err, out.ErrorDetails, failure))
 			s.closeUpstream(out.StreamID)
-			return out, fail(502, "upstream transport failed: "+safeError(result.err))
+			return out, failure
 		}
 	case <-timer.C:
-		return out, fail(504, "Cline upstream request timed out")
+		return out, requestTimedOut("Cline upstream request timed out")
 	case <-s.stopCh:
 		return out, fail(503, "ClinePassBridge is shutting down")
 	}
 	out.deadline = deadline
+	out.callbackID = callbackID
 	if out.StreamID == "" {
 		return out, fail(502, "host returned no upstream stream")
 	}
@@ -214,24 +233,13 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 		if up.local != nil {
 			chunk, e = up.local.read()
 		} else {
-			e = s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID}, &chunk)
+			e = s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID, "host_callback_id": up.callbackID, "error_details_supported": true}, &chunk)
 		}
 		mu.Lock()
 		timeout := timedOut
 		mu.Unlock()
 		if timeout {
-			return fail(504, "Cline upstream request timed out")
-		}
-		if e != nil {
-			up.diagnostics.transportError(e.Error())
-			if up.local != nil {
-				return e
-			}
-			return fail(502, "upstream read failed: "+safeError(e))
-		}
-		if chunk.Error != "" {
-			up.diagnostics.transportError(chunk.Error)
-			return fail(502, "upstream stream interrupted: "+safeError(errors.New(chunk.Error)))
+			return requestTimedOut("Cline upstream request timed out")
 		}
 		total += len(chunk.Payload)
 		up.diagnostics.capture(chunk.Payload)
@@ -243,6 +251,17 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 				return e
 			}
 		}
+		if e != nil || chunk.Error != "" || chunk.ErrorDetails != nil {
+			if e == nil && chunk.Error != "" {
+				e = errors.New(chunk.Error)
+			}
+			failure := e
+			if up.local == nil || failure == nil {
+				failure = hostHTTPFault(e, chunk.ErrorDetails, "upstream stream interrupted")
+			}
+			up.diagnostics.transportError(callbackTransportDiagnostic(e, chunk.ErrorDetails, failure))
+			return failure
+		}
 		if chunk.Done {
 			return nil
 		}
@@ -251,18 +270,18 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 func (s *Service) readJSON(up upstreamStream) ([]byte, error) {
 	var b bytes.Buffer
 	e := s.read(up, func(v []byte) error { b.Write(v); return nil })
-	if e != nil {
-		return nil, e
-	}
 	if up.StatusCode < 200 || up.StatusCode >= 300 {
 		j, _ := decodeObject(b.Bytes())
 		err := classifyUpstreamError(up.StatusCode, up.Headers, j, time.Now())
 		return nil, s.classifyEgressError(up, j, b.Bytes(), err)
 	}
+	if e != nil {
+		return nil, e
+	}
 	return b.Bytes(), nil
 }
 func (s *Service) newLog(r ExecutorRequest, c Credential, up string) LogEntry {
-	return LogEntry{UpstreamAttempts: new(int), estimateKey: s.startEstimateRequest(c), ReasoningEffort: requestReasoningEffort(r.Payload), CredentialID: c.ID, ID: id(), Time: time.Now().UTC(), Model: r.Model, UpstreamModel: up, Stream: r.Stream, Provider: "unknown", ProviderSource: "not_reported", Credential: c.Label, Attempts: []Attempt{}}
+	return LogEntry{DownstreamStarted: new(bool), PromptUsageReported: new(bool), CompletionUsageReported: new(bool), UpstreamAttempts: new(int), estimateKey: s.startEstimateRequest(c), ReasoningEffort: requestReasoningEffort(r.Payload), CredentialID: c.ID, ID: id(), Time: time.Now().UTC(), Model: r.Model, UpstreamModel: up, Stream: r.Stream, Provider: "unknown", ProviderSource: "not_reported", Credential: c.Label, Attempts: []Attempt{}}
 }
 func (s *Service) execute(r ExecutorRequest) (any, error) {
 	if err := s.begin(); err != nil {
@@ -291,7 +310,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer func() { lease.finish(e) }()
+	defer func() { finishRequestRateLease(lease, e) }()
 	cfg := s.config()
 	wantStream := cfg.NonstreamMode == "stream-aggregate"
 	var body []byte
@@ -387,8 +406,13 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			}
 			observeMetadata(j, entry, attempt)
 			cp.observe(j)
-			if entry.TTFTMS == 0 && contentStarted(j) {
-				entry.TTFTMS = time.Since(start).Milliseconds()
+			if contentStarted(j) {
+				if entry.EffectiveFrameCount == 0 {
+					entry.TTFTMS = time.Since(start).Milliseconds()
+				}
+				entry.EffectiveFrameCount++
+				at := time.Now().UTC()
+				entry.LastEffectiveFrameAt = &at
 			}
 			if emit != nil {
 				j["model"] = model
@@ -404,12 +428,13 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 		e = decoder.End()
 		if e != nil {
 			entry.StreamEnd = "eof_incomplete_frame"
+			e = upstreamNetworkFailure("eof", "upstream stream ended with an incomplete SSE frame")
 		} else if cp.completeAtEOF() {
 			cp.done = true
 			entry.StreamEnd = "eof_after_finish"
 		} else {
 			entry.StreamEnd = "eof_incomplete_completion"
-			e = fail(502, fmt.Sprintf("upstream stream closed before [DONE] (choices=%d/%d, finished=%t, output=%t)", len(cp.choices), cp.expectedChoices, cp.allFinished(), cp.hasOutput))
+			e = upstreamNetworkFailure("eof", fmt.Sprintf("upstream stream closed before [DONE] (choices=%d/%d, finished=%t, output=%t)", len(cp.choices), cp.expectedChoices, cp.allFinished(), cp.hasOutput))
 		}
 	}
 	return cp, e
@@ -425,16 +450,20 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 	s.applyReasoningMapping(j, &entry)
 	start := time.Now()
 	var lease *rateLease
+	upstreamOpened := false
 	failEarly := func(err error) (any, error) {
 		defer s.active.Done()
 		_ = s.observeQuotaError(c, err)
-		lease.finish(err)
+		finishRequestRateLease(lease, err)
 		entry.Status = statusOf(err)
 		entry.Error = safeError(err)
 		entry.DurationMS = time.Since(start).Milliseconds()
 		attempt := Attempt{Status: entry.Status, Error: entry.Error, Mode: "stream", Provider: "unknown", DurationMS: entry.DurationMS}
 		logErrorDetails(&entry, &attempt, err)
 		entry.Attempts = append(entry.Attempts, attempt)
+		if upstreamOpened {
+			s.closeOutputStream(r.StreamID, &entry, err)
+		}
 		s.appendLog(entry)
 		return nil, err
 	}
@@ -450,6 +479,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 	}
 	*entry.UpstreamAttempts++
 	us, e := s.request(r, c, j, true)
+	upstreamOpened = us.StreamID != ""
 	if e != nil {
 		return failEarly(e)
 	}
@@ -457,8 +487,8 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		_, e = s.readJSON(us)
 		return failEarly(e)
 	}
-	// Until actual output arrives, return errors through the structured RPC
-	// envelope. host.stream.close only carries text and loses HTTP status.
+	// Preserve the existing RPC handoff separately from acknowledged downstream
+	// emits. Errors before the handoff still return through the RPC envelope.
 	ready := make(chan error, 1)
 	go func() {
 		defer s.active.Done()
@@ -473,8 +503,9 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 				b = append(append([]byte("data: "), b...), []byte("\n\n")...)
 			}
 			if e := s.call("host.stream.emit", map[string]any{"stream_id": r.StreamID, "payload": b}, nil); e != nil {
-				return fail(499, "client disconnected")
+				return requestCanceled("client disconnected")
 			}
+			*entry.DownstreamStarted = true
 			return nil
 		}
 		defer func() {
@@ -493,12 +524,11 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			entry.Status = attempt.Status
 			entry.Error = attempt.Error
 			entry.DurationMS = attempt.DurationMS
-			lease.finish(err)
+			finishRequestRateLease(lease, err)
+			s.closeOutputStream(r.StreamID, &entry, err)
 			s.appendLog(entry)
 			if !started {
 				ready <- err
-			} else {
-				_ = s.call("host.stream.close", map[string]any{"stream_id": r.StreamID, "error": safeError(err)}, nil)
 			}
 		}()
 		_, err = s.consumeSSE(us, r.Model, &entry, &attempt, start, func(b []byte) error {
