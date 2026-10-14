@@ -631,7 +631,6 @@
             <form class="form-stack" id="retryCompatibilityForm" aria-labelledby="retryCompatibilityHeading">
               <div class="field">
                 <label class="retry-compat-switch" for="clientRetryCompatibility"><span>启用重试兼容</span><input id="clientRetryCompatibility" type="checkbox" role="switch" checked></label>
-                <div class="panel-hint">默认开启</div>
               </div>
               <div class="form-foot"><button class="button primary" id="saveRetryCompatibility" type="submit">保存设置</button></div>
             </form>
@@ -645,7 +644,6 @@
             <form class="form-stack" id="streamIdleForm" aria-labelledby="streamIdleHeading">
               <div class="field">
                 <label class="retry-compat-switch" for="streamIdleCutoffEnabled"><span>启用提前截流</span><input id="streamIdleCutoffEnabled" type="checkbox" role="switch" checked></label>
-                <div class="panel-hint">默认开启</div>
               </div>
               <div class="field"><label for="streamIdleTimeoutSeconds">无新输出等待时间（秒）</label><input class="control" id="streamIdleTimeoutSeconds" type="number" min="1" max="1800" step="1" value="10" required></div>
               <div class="form-foot"><button class="button primary" id="saveStreamIdle" type="submit">保存设置</button></div>
@@ -664,7 +662,8 @@
   <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
     <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus>关闭</button></div>
     <p>简化 Fireworks / LiteLLM 响应截断的错误文案，避免原版 DSH 等客户端被嵌套的 400 误导，便于识别为可重试的服务端错误。</p>
-    <p>默认开启。关闭后返回原始报错；完整错误始终保留在请求日志中。是否重试及重试次数由客户端决定。</p>
+    <p>默认开启。关闭后保留原始报错文案；已识别的响应截断与闲置截流仍保留免冷却兼容，避免在原版 CPA v8.0.13 新增凭据或模型冷却。完整错误始终保留在请求日志中，已有冷却继续保留。</p>
+    <p>CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
     <p>调整后点击「保存设置」生效。</p>
   </dialog>
 
@@ -673,7 +672,7 @@
     <p>收到首段有效输出后，如果连续达到设定时间没有新输出，就主动截断当前流并报告服务端错误，让客户端尽快进入自己的重试流程。</p>
     <p>思考内容、正文和工具调用的有效增量都会重新计时；心跳和空帧不算新输出。等待首段输出时仍使用请求总时长上限。</p>
     <p>默认开启，等待 10 秒，可设为 1–1800 秒。适用于所有上游流式回复，正常回复中的长暂停也会触发。关闭后仍保留请求总时长上限。</p>
-    <p>点击本栏「保存设置」后对后续请求生效。截流详情会保留在请求日志中，是否重试及重试次数由客户端决定；账号和模型冷却由 CPA 处理。</p>
+    <p>点击本栏「保存设置」后对后续请求生效。截流仍记为失败并保留日志，通过原版 CPA v8.0.13 的免冷却兼容避免新增凭据或模型冷却；已有冷却继续保留。CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
   </dialog>
 
   <dialog id="egressGuideDialog" aria-labelledby="egressGuideTitle">

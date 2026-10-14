@@ -17,7 +17,7 @@ const upstreamStreamIdleTimeoutKind = "upstream_stream_idle_timeout"
 
 func streamIdleTimeout(timeout time.Duration) error {
 	return &upstreamError{
-		APIError: &APIError{Status: 502, Kind: upstreamStreamIdleTimeoutKind, Message: fmt.Sprintf("HTTP 502: upstream response stream idle for %gs after effective output (%s)", timeout.Seconds(), upstreamStreamIdleTimeoutKind)},
+		APIError: &APIError{Status: 502, Kind: upstreamStreamIdleTimeoutKind, Message: fmt.Sprintf("HTTP 502: upstream stream i/o timeout after %gs without effective output (%s)", timeout.Seconds(), upstreamStreamIdleTimeoutKind)},
 		Scope:    "request",
 	}
 }

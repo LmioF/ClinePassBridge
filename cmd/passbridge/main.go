@@ -241,11 +241,8 @@ func failure(details *rpcError) []byte {
 }
 
 func errorDetails(err error) *rpcError {
-	details := &rpcError{ErrorCode: "plugin_error", Message: service.ClientErrorMessage(err), HTTPStatus: http.StatusInternalServerError}
-	var status interface{ StatusCode() int }
-	if errors.As(err, &status) && status.StatusCode() >= 400 && status.StatusCode() <= 599 {
-		details.HTTPStatus = status.StatusCode()
-	}
+	message, status := service.HostErrorDetails(err)
+	details := &rpcError{ErrorCode: "plugin_error", Message: message, HTTPStatus: status}
 	var code interface{ Code() string }
 	if errors.As(err, &code) && strings.TrimSpace(code.Code()) != "" {
 		details.ErrorCode = code.Code()

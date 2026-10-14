@@ -12,19 +12,23 @@ ClinePassBridge 使用 JSON ABI v1，按 [README](../README.md#安装与配置) 
 
 ## 错误状态与客户端重试
 
-「重试兼容」默认开启，将指定 Fireworks/LiteLLM 响应截断规范为：
+「重试兼容」默认开启，将已识别的指定 Fireworks/LiteLLM 响应截断规范为：
 
 ```text
-HTTP 502: upstream response stream ended before completion (upstream_transport_incomplete)
+HTTP 502: upstream response stream ended before completion: unexpected EOF (upstream_transport_incomplete)
 ```
 
-这是错误文案。原版 CPA 的流错误接口只传字符串，按默认 **500** 封装错误；若下游已经开始 **HTTP 200**，响应状态保持 200，通过 SSE error 结束流，不补正常完成帧。提前截流也受同一流错误路径约束。非流式聚合通过 RPC 返回错误时保留 502 状态。
+对于已识别的响应截断与插件闲置截流，插件分别使用 `unexpected EOF` 和 `i/o timeout`，利用原版 CPA v8.0.13 的传输错误识别跳过本次新增账号/模型冷却。该行为覆盖流内错误、首段输出前的错误及非流式聚合，不依赖 CPA 补丁，也不清除已有冷却。
 
-客户端可按自己的策略重试 5xx。已核对的 DeepSeek Harness 外部 OpenAI compatible 路径（源码 `d743267388641bc76f17c45ce8b4c231aed1d32c`）按既有文案规则将上述错误归为 `SERVER`；实际重试取决于 `llm-retry`、重试策略和预算。插件结束失败请求，不自动重放已开始的输出。
+宿主冷却兼容与 `client_retry_compatibility` 开关独立。关闭「重试兼容」后保留原始报错并补充必要的识别词；完整嵌套异常始终保留在插件日志。
+
+原版 CPA 的流错误接口只传字符串，按默认 **500** 封装错误；已开始的 **HTTP 200** 保持原状态，通过 SSE error 结束流。首段输出前和非流式聚合通过 RPC 返回这两类故障时，插件省略内部 `http_status`（0 表示缺失），让 CPA 同样识别传输错误；下游默认按 500 封装，插件内部与日志仍保留 502。这两类故障不再匹配用户自定义的 500/502 错误规则；其他错误保留原状态和规则。
+
+CPA 可在首段输出前按自身请求重试预算重试；客户端也按自身配置决定重试。已核对的 DSH 源码 `d743267388641bc76f17c45ce8b4c231aed1d32c` 将规范文案归为可重试的 `SERVER`，实际受重试组件、策略和预算约束。插件不自动重放已开始的输出。
 
 ## 冷却与网络分类
 
-账号和模型冷却由 CPA 按实际收到的错误、匹配规则及默认策略决定。插件的响应截断、提前截流或本地取消分类不构成免冷却承诺；插件自己的套餐额度保护和团队限流退避独立处理。规则与调度见 [进阶配置](configuration.md#统一错误规则) 和 [调度说明](scheduling.md#响应截断与模型冷却)。
+上述豁免限于已识别的指定响应截断与插件闲置截流，不泛指所有 LiteLLM 错误或所有宿主版本。请求仍计为失败，已有 CPA 冷却和团队退避保留。真实鉴权失败、限流、额度耗尽继续按原规则处理；本地取消和其他网络错误仍遵循 CPA 的实际分类。见 [调度说明](scheduling.md#响应截断与模型冷却)。
 
 插件独立网络路径保留错误类型，可分类连接重置、DNS / TLS 故障、超时和提前 EOF。原版 CPA HTTP 回调只返回错误字符串，分类信息丢失，插件不凭文字推断网络来源。上游已返回错误 HTTP 状态时，即使读取错误正文再次断网，仍保留原状态。
 
@@ -32,4 +36,4 @@ HTTP 502: upstream response stream ended before completion (upstream_transport_i
 
 运行实现保留对 `error_details`、`error_details_supported`、`model_states_available` 和 `model_states` 等可选字段的兼容读取。仅在宿主实际提供时使用这些信息，原版安装流程不依赖它们。
 
-宿主未确认结构化流错误支持时，日志中的 `legacy_host_unknown` 表示处理结果未确认，实际冷却以 CPA 状态为准。未提供模型范围时，账号卡片显示「调度受限」。
+宿主未确认结构化流错误支持时，日志中的 `legacy_host_unknown` 仍表示处理结果未获宿主确认；文本识别兼容不提供这种确认，因此该值不代表兼容失效，也不应仅据识别词改记为已确认豁免。实际冷却以 CPA 状态为准。未提供模型范围时，账号卡片显示「调度受限」。

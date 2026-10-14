@@ -34,8 +34,12 @@ func TestClientErrorCompatibilityPersistsAndControlsStreamClose(t *testing.T) {
 			t.Fatalf("compatibility=%v: client error %q, want %q", enabled, got, want)
 		}
 		s.closeOutputStream("client-stream", &LogEntry{ErrorPhase: "after_output"}, err)
-		if h.clientError != want {
-			t.Fatalf("compatibility=%v: stream close %q, want %q", enabled, h.clientError, want)
+		wantStream := want
+		if !enabled {
+			wantStream += ": unexpected EOF"
+		}
+		if h.clientError != wantStream {
+			t.Fatalf("compatibility=%v: stream close %q, want %q", enabled, h.clientError, wantStream)
 		}
 		if !err.(*upstreamError).IsRequestScoped() || err.Error() != transportIncompleteFixture {
 			t.Fatal("compatibility toggle changed scheduling or diagnostic error")
@@ -46,7 +50,7 @@ func TestClientErrorCompatibilityPersistsAndControlsStreamClose(t *testing.T) {
 func TestClientErrorTransportMessage(t *testing.T) {
 	err := classifyUpstreamError(200, nil, map[string]any{"error": transportIncompleteFixture}, time.Now())
 	message := ClientErrorMessage(err)
-	if !strings.Contains(message, "502") || strings.Contains(message, "400") || strings.Contains(message, "invalid request") {
+	if !strings.Contains(message, "502") || !strings.Contains(message, "unexpected EOF") || strings.Contains(message, "400") || strings.Contains(message, "invalid request") {
 		t.Fatalf("nested provider status leaked into client fault: %q", message)
 	}
 	if err.Error() != transportIncompleteFixture {
@@ -57,6 +61,66 @@ func TestClientErrorTransportMessage(t *testing.T) {
 	entry.Error = safeError(err)
 	if entry.Error != transportIncompleteFixture || entry.ErrorKind != transportIncompleteKind {
 		t.Fatalf("original diagnostic log lost: %#v", entry)
+	}
+}
+
+func TestStreamCooldownMarkersPreserveOtherFaults(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	h := newFakeHost()
+	s.SetHost(h.call)
+	for _, enabled := range []bool{false, true} {
+		s.cfg.ClientRetryCompatibility = enabled
+		for _, status := range []int{400, 401, 402, 403, 429, 502, 504} {
+			err := classifyUpstreamError(status, nil, map[string]any{"error": "original upstream error"}, time.Now())
+			s.closeOutputStream("client-stream", &LogEntry{}, err)
+			if h.clientError != safeError(err) {
+				t.Fatalf("compatibility=%v status=%d changed unrelated fault: %q", enabled, status, h.clientError)
+			}
+		}
+		// Actual auth/quota/rate failures win even if the provider body resembles
+		// the known LiteLLM truncation signature.
+		for _, status := range []int{401, 402, 403, 429} {
+			err := classifyUpstreamError(status, nil, map[string]any{"error": transportIncompleteFixture}, time.Now())
+			s.closeOutputStream("client-stream", &LogEntry{}, err)
+			if h.clientError != safeError(err) {
+				t.Fatalf("compatibility=%v status=%d acquired a transport exemption", enabled, status)
+			}
+		}
+		err := fmt.Errorf("wrapped: %w", streamIdleTimeout(10*time.Second))
+		s.closeOutputStream("client-stream", &LogEntry{}, err)
+		if strings.Count(h.clientError, "i/o timeout") != 1 || !strings.Contains(h.clientError, "HTTP 502:") {
+			t.Fatalf("compatibility=%v: idle error lost marker or status: %q", enabled, h.clientError)
+		}
+		s.closeOutputStream("client-stream", &LogEntry{}, nil)
+		if h.clientError != "" {
+			t.Fatal("successful close acquired an error")
+		}
+	}
+}
+
+func TestHostErrorDetailsAvoidsCooldownBeforeStreamHandoff(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	for _, enabled := range []bool{false, true} {
+		s.cfg.ClientRetryCompatibility = enabled
+		for _, err := range []error{
+			classifyUpstreamError(200, nil, map[string]any{"error": transportIncompleteFixture}, time.Now()),
+			fmt.Errorf("wrapped: %w", streamIdleTimeout(10*time.Second)),
+		} {
+			message, status := s.HostErrorDetails(err)
+			if status != 0 || (!strings.Contains(message, "unexpected EOF") && !strings.Contains(message, "i/o timeout")) {
+				t.Fatalf("compatibility=%v: RPC fault blocks stock transport classification: status=%d message=%q", enabled, status, message)
+			}
+			if statusOf(err) != 502 {
+				t.Fatal("wire compatibility changed diagnostic status")
+			}
+		}
+		for _, status := range []int{400, 401, 402, 403, 429, 502, 504} {
+			err := classifyUpstreamError(status, nil, map[string]any{"error": "ordinary upstream error"}, time.Now())
+			message, gotStatus := s.HostErrorDetails(err)
+			if gotStatus != status || message != safeError(err) {
+				t.Fatalf("unrelated RPC error changed: status=%d message=%q", gotStatus, message)
+			}
+		}
 	}
 }
 

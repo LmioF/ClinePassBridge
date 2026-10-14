@@ -24,7 +24,8 @@ func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error)
 	if streamID == "" {
 		return
 	}
-	payload := map[string]any{"stream_id": streamID, "error": s.ClientErrorMessage(err)}
+	message, _ := s.HostErrorDetails(err)
+	payload := map[string]any{"stream_id": streamID, "error": message}
 	if err != nil {
 		details := streamErrorDetails{HTTPStatus: statusOf(err), Code: "upstream_error", Phase: entry.ErrorPhase}
 		var coded interface{ Code() string }
