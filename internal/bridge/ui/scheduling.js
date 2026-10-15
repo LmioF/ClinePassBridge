@@ -68,7 +68,7 @@ function credentialScheduleDetail(item) {
 function updateCredentialScheduling() {
   for (const row of $('credentialList').children) {
     const item = credentialView.items.find(a => a.id === row.dataset.id); if (!item) continue;
-    row.classList.toggle('quota-paused', credentialQuotaPaused(item));
+    syncCredentialCollapse(row, item);
     row.querySelector('.credential-schedule-badges').innerHTML = credentialScheduleBadges(item);
     row.querySelector('.credential-schedule-detail').innerHTML = credentialScheduleDetail(item);
     const toggle = row.querySelector('.credential-enabled');

@@ -22,7 +22,7 @@ type SSEDecoder struct {
 func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 	d.buffer = append(d.buffer, b...)
 	if len(d.buffer) > d.max {
-		return fail(502, "SSE frame exceeds configured limit")
+		return responseLimitFailure("SSE frame exceeds configured limit")
 	}
 	for {
 		i := bytes.IndexByte(d.buffer, '\n')
@@ -49,7 +49,7 @@ func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 			d.data = append(d.data, v)
 			d.size += len(v)
 			if d.size > d.max {
-				return fail(502, "SSE frame exceeds configured limit")
+				return responseLimitFailure("SSE frame exceeds configured limit")
 			}
 		}
 		if strings.HasPrefix(line, "event:") {
@@ -60,7 +60,7 @@ func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 }
 func (d *SSEDecoder) End() error {
 	if strings.TrimSpace(string(d.buffer)) != "" || len(d.data) > 0 {
-		return fail(502, "upstream stream ended with an incomplete SSE frame")
+		return upstreamProtocolFailure("upstream stream ended with an incomplete SSE frame")
 	}
 	return nil
 }
@@ -306,7 +306,7 @@ func mergeObjects(dst, src map[string]any, concat bool) {
 func unwrap(body []byte) (map[string]any, error) {
 	j, e := decodeObject(body)
 	if e != nil {
-		return nil, e
+		return nil, upstreamProtocolFailure("upstream returned invalid JSON")
 	}
 	if j["error"] != nil || j["success"] == false {
 		return nil, fail(500, errorMessage(j))
@@ -314,12 +314,12 @@ func unwrap(body []byte) (map[string]any, error) {
 	if j["success"] == true {
 		d := object(j["data"])
 		if d == nil {
-			return nil, fail(502, "Cline success response has no data object")
+			return nil, upstreamProtocolFailure("Cline success response has no data object")
 		}
 		j = d
 	}
 	if len(list(j["choices"])) == 0 {
-		return nil, fail(502, "Cline response has no choices")
+		return nil, upstreamProtocolFailure("Cline response has no choices")
 	}
 	return j, nil
 }
@@ -420,8 +420,15 @@ func effectiveFunctionDelta(function map[string]any) bool {
 }
 func isEmptyError(err error) bool {
 	var upstream *upstreamError
-	if errors.As(err, &upstream) && upstream.IsRequestScoped() {
-		return false
+	if errors.As(err, &upstream) {
+		// Only the native provider's empty-response error may opt into the
+		// configured one-time SSE fallback. Transport/limit/auth faults must not.
+		if upstream.Kind != upstreamServiceKind && upstream.Kind != "upstream_error" {
+			return false
+		}
+		if upstream.Status < 500 || (upstream.Scope != "" && upstream.Scope != "request") {
+			return false
+		}
 	}
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "empty response content")
 }

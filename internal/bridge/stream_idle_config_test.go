@@ -23,7 +23,7 @@ func TestStreamIdleConfigLegacyDefaults(t *testing.T) {
 			// The existing fixture registers with YAML that omits both fields.
 			s := observabilityService(t, dir)
 			cfg := s.config()
-			if !cfg.StreamIdleCutoffEnabled || cfg.StreamIdleTimeoutSeconds != 10 {
+			if cfg.StreamIdleCutoffEnabled || cfg.StreamIdleTimeoutSeconds != 20 {
 				t.Fatalf("legacy %s lost idle defaults: %s", source, jsonBytes(cfg))
 			}
 			if source == "settings-json" && (cfg.TimeoutSeconds != 120 || cfg.ClientRetryCompatibility) {
@@ -34,7 +34,7 @@ func TestStreamIdleConfigLegacyDefaults(t *testing.T) {
 			if err := json.Unmarshal(response.Body, &fields); err != nil {
 				t.Fatal(err)
 			}
-			if string(fields["stream_idle_cutoff_enabled"]) != "true" || string(fields["stream_idle_timeout_seconds"]) != "10" {
+			if string(fields["stream_idle_cutoff_enabled"]) != "false" || string(fields["stream_idle_timeout_seconds"]) != "20" {
 				t.Fatalf("management config omitted idle defaults: %s", response.Body)
 			}
 		})
@@ -43,7 +43,7 @@ func TestStreamIdleConfigLegacyDefaults(t *testing.T) {
 
 func TestStreamIdleConfigExplicitValuesPersistAndReload(t *testing.T) {
 	for _, source := range []string{"yaml", "management-json"} {
-		for _, seconds := range []int{1, 37, 1800} {
+		for _, seconds := range []int{1, 10, 37, 200, 1800} {
 			t.Run(fmt.Sprintf("%s-%d", source, seconds), func(t *testing.T) {
 				s := observabilityService(t, "")
 				if source == "yaml" {

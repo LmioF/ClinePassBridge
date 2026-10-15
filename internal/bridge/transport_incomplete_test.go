@@ -27,10 +27,10 @@ func TestProviderTransportIncompleteClassification(t *testing.T) {
 		{"SSE 403 wins", transportIncompleteFixture, "upstream_auth_error", 200, 403, 403},
 		{"SSE 429 wins", transportIncompleteFixture, "upstream_rate_limited", 200, 429, 429},
 		{"account quota wins", transportIncompleteFixture + " reached your weekly Clinepass limit", "upstream_quota_exhausted", 200, 502, 0},
-		{"ordinary 502", "Fireworks service unavailable", "upstream_error", 502, 502, 0},
-		{"generic truncation", "TransferEncodingError: response payload incomplete", "upstream_error", 200, 502, 0},
-		{"missing provider signature", "APIConnectionError: response payload incomplete", "upstream_error", 200, 502, 0},
-		{"connection error alone", "litellm.APIConnectionError: connection failed", "upstream_error", 200, 502, 0},
+		{"ordinary 502", "Fireworks service unavailable", upstreamServiceKind, 502, 502, 0},
+		{"generic truncation", "TransferEncodingError: response payload incomplete", upstreamServiceKind, 200, 502, 0},
+		{"missing provider signature", "APIConnectionError: response payload incomplete", upstreamServiceKind, 200, 502, 0},
+		{"connection error alone", "litellm.APIConnectionError: connection failed", upstreamServiceKind, 200, 502, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			body := map[string]any{"error": map[string]any{"message": tt.message}}
@@ -47,7 +47,7 @@ func TestProviderTransportIncompleteClassification(t *testing.T) {
 			if upstream.Kind != tt.kind || upstream.Status != tt.status || upstream.HTTPStatus != tt.httpStatus || upstream.UpstreamStatus != tt.status {
 				t.Fatalf("classification = %#v", upstream)
 			}
-			if upstream.IsRequestScoped() != (tt.kind == transportIncompleteKind) {
+			if upstream.IsRequestScoped() != (tt.kind == transportIncompleteKind || tt.kind == upstreamServiceKind) {
 				t.Fatalf("unexpected request scope for %s", tt.kind)
 			}
 			if upstream.IsRequestScoped() && (upstream.Scope != "request" || !upstream.RetryAt.IsZero() || asTeamRateLimit(err) != nil) {
@@ -61,7 +61,7 @@ func TestProviderTransportIncompleteClassification(t *testing.T) {
 }
 
 func TestTransportIncompleteHonorsNumericErrorStatus(t *testing.T) {
-	for _, status := range []int{401, 403, 429} {
+	for _, status := range []int{401, 402, 403, 429} {
 		for _, value := range []any{status, int64(status), float64(status), json.Number(fmt.Sprint(status)), fmt.Sprint(status)} {
 			err := classifyUpstreamError(200, nil, map[string]any{"error": map[string]any{"message": transportIncompleteFixture, "status": value}}, time.Now())
 			upstream := err.(*upstreamError)
@@ -213,7 +213,6 @@ func TestStreamClosePreservesOrdinaryErrorPolicy(t *testing.T) {
 		{"rate limit", 429, "credential_model", classifyUpstreamError(429, nil, map[string]any{"error": "rate limited"}, now)},
 		{"team limit", 429, "upstream_team", classifyUpstreamError(429, nil, map[string]any{"error": teamLimitMessage}, now)},
 		{"account quota", 502, "account", classifyUpstreamError(502, nil, map[string]any{"error": "reached your weekly Clinepass limit"}, now)},
-		{"ordinary gateway", 502, "", classifyUpstreamError(502, nil, map[string]any{"error": "bad gateway"}, now)},
 		{"egress limit", 429, "egress_ip", &upstreamError{APIError: &APIError{429, "upstream_ip_rate_limited", "edge rate limit"}, Scope: "egress_ip", RetryAt: now.Add(time.Minute)}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

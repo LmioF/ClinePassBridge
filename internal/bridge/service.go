@@ -91,6 +91,11 @@ func (s *Service) config() Config {
 	}
 	return c
 }
+func (s *Service) debugEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.Debug
+}
 func id() string { b := make([]byte, 12); _, _ = rand.Read(b); return hex.EncodeToString(b) }
 func atomicJSON(path string, v any) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
@@ -252,7 +257,7 @@ func (s *Service) begin() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
-		return fail(503, "ClinePassBridge is shutting down")
+		return bridgeUnavailable("ClinePassBridge is shutting down")
 	}
 	s.active.Add(1)
 	return nil
@@ -436,6 +441,10 @@ func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 func (s *Service) appendLog(entry LogEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Consult the live setting: a request may have started before debug was disabled.
+	if !s.cfg.Debug {
+		entry.StreamDiagnostics = nil
+	}
 	s.recordEstimateLocked(entry)
 	entry.Error = safeError(errors.New(entry.Error))
 	completedAt := time.Now().UTC()

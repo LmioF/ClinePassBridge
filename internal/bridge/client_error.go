@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -24,13 +25,23 @@ func ClientErrorMessage(err error) string {
 	if errors.As(err, &upstream) && upstream.Kind == transportIncompleteKind && upstream.IsRequestScoped() {
 		return "HTTP 502: upstream response stream ended before completion: unexpected EOF (upstream_transport_incomplete)"
 	}
+	if errors.As(err, &upstream) && upstream.IsRequestScoped() {
+		switch upstream.Kind {
+		case upstreamServiceKind:
+			return fmt.Sprintf("HTTP %d: upstream service failed; retry the request (%s)", upstream.Status, upstream.Kind)
+		case upstreamProtocolKind:
+			return "HTTP 502: upstream returned an incomplete or invalid response (upstream_protocol_error)"
+		case upstreamNetworkKind, upstreamCallbackKind:
+			return "HTTP 502: upstream connection interrupted (" + upstream.Kind + ")"
+		}
+	}
 	return safeError(err)
 }
 
 // HostErrorDetails preserves stock CPA's transport classification across its
 // stream and RPC ABIs. This is independent of client retry normalization:
-// disabling that option keeps the original diagnostic text plus the EOF marker.
-// Only these positively classified request faults receive a cooldown exemption.
+// disabling it keeps diagnostic text where the host can safely classify it.
+// Only failures classified at their source receive a cooldown exemption.
 // A zero status is an absent RPC status, not an HTTP response status: stock CPA
 // recognizes the transport message before rendering a normal 500 client error.
 func (s *Service) HostErrorDetails(err error) (string, int) {
@@ -41,8 +52,11 @@ func (s *Service) HostErrorDetails(err error) (string, int) {
 		status = coded.StatusCode()
 	}
 	var upstream *upstreamError
-	if !errors.As(err, &upstream) || !upstream.IsRequestScoped() {
+	if !errors.As(err, &upstream) {
 		return message, status
+	}
+	if !upstream.IsRequestScoped() {
+		return protectedHostMessage(upstream, message), status
 	}
 	var marker string
 	switch upstream.Kind {
@@ -50,6 +64,16 @@ func (s *Service) HostErrorDetails(err error) (string, int) {
 		marker = "unexpected EOF"
 	case upstreamStreamIdleTimeoutKind:
 		marker = "i/o timeout"
+	case upstreamNetworkKind, upstreamCallbackKind:
+		marker = "[clinepassbridge:cpa_compat:connection aborted]"
+	case upstreamServiceKind, upstreamProtocolKind, bridgeUnavailableKind:
+		marker = "[clinepassbridge:cpa_compat:server misbehaving]"
+	case requestCanceledKind:
+		return "context canceled", 0
+	case requestDeadlineKind:
+		return "context deadline exceeded", 0
+	case responseLimitKind:
+		return responseLimitHostMessage(safeError(err)), 413
 	default:
 		return message, status
 	}

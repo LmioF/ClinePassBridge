@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.3"
+const Version = "0.3.4"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -143,11 +143,12 @@ type Config struct {
 	ProviderPolicy           string                  `json:"provider_policy" yaml:"provider_policy"`
 	TimeoutSeconds           int                     `json:"timeout_seconds" yaml:"timeout_seconds"`
 	LogRetention             int                     `json:"log_retention" yaml:"log_retention"`
+	Debug                    bool                    `json:"debug" yaml:"debug"`
 	MaxResponseBytes         int                     `json:"max_response_bytes" yaml:"max_response_bytes"`
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: true, StreamIdleTimeoutSeconds: 10, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 16 << 20}
+	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: false, StreamIdleTimeoutSeconds: 20, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 16 << 20}
 }
 
 // Scalar settings support partial updates, but supplied collections replace the
@@ -287,6 +288,7 @@ type Attempt struct {
 	Error               string `json:"error,omitempty"`
 }
 type LogEntry struct {
+	StreamDiagnostics           *StreamDiagnostics   `json:"stream_diagnostics,omitempty"`
 	ErrorPhase                  string               `json:"error_phase,omitempty"`
 	DownstreamStarted           *bool                `json:"downstream_started,omitempty"`
 	EffectiveFrameCount         int                  `json:"effective_frame_count"`

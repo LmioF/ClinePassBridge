@@ -1,21 +1,31 @@
+<div align="center">
+
 # ClinePassBridge
 
-把 Cline Pass 接入 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)，通过 CPA 的 OpenAI 兼容接口调用模型。
+把 Cline Pass 接到 CPA，在你常用的 OpenAI 兼容客户端里调用。
 
-## 功能
+[![Release](https://img.shields.io/github/v/release/xiao-qiu-qiu/ClinePassBridge?style=flat&color=2563eb)](https://github.com/xiao-qiu-qiu/ClinePassBridge/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-64748b)](https://github.com/xiao-qiu-qiu/ClinePassBridge/releases)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/xiao-qiu-qiu/ClinePassBridge?color=16a34a)](LICENSE)
 
-- 在独立的「凭据管理」页管理多个 Cline Pass API key、账号优先级、启停状态、冷却、套餐用量和额度估计。
-- 在「模型映射」页自定义模型名称和思考强度映射，在「钉上游」页选择上游 provider。
-- 统一编辑错误规则，按状态码、文本或正则匹配选择停止、继续尝试及是否冷却；保存后同步所有插件账号，新账号自动沿用。
-- 额度保护始终开启，五小时、周或月额度耗尽后自动暂停账号，复查确认恢复后重新参与调度；人工停用账号仍查询用量。
-- 支持 SSE 流式输出，也能将上游流式响应合并为普通 JSON。
-- 查看请求日志、实际使用的账号和 provider、首字耗时、输出速率及缓存命中率。
-- 在「模型映射」或「钉上游」页测试模型，选择测试凭据与思考强度；用量查询、上游探测和模型测试均支持凭据独立代理。
-- **实验性通用代理池，默认关闭**：支持标准 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理及显式直连出口，按出口分组限制请求速率和并发。Resin 只是可选的代理来源。
+[下载安装](https://github.com/xiao-qiu-qiu/ClinePassBridge/releases) · [使用文档](docs/configuration.md) · [反馈问题](https://github.com/xiao-qiu-qiu/ClinePassBridge/issues)
+
+</div>
+
+本项目是 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI) 的插件，带一个网页管理界面。在界面内添加 Cline Pass API key 和模型后，就可以通过 CPA 发起请求。
+
+## 本项目能做什么
+
+- **管理多个账号**：查看套餐用量、调整调度优先级、开关账号调度。额度用完自动暂停，额度恢复自动恢复。
+- **映射模型**：自定义模型名映射，避免客户端手敲 `cline-pass/` 前缀。还能映射思考强度。
+- **钉上游**：当账号是可钉账号（即供应商不锁死在 `openai_compatible_private` 的账号）时，可以固定指定上游 provider，不让 Cline 替你选择。
+- **查看请求情况**：记录日志，显示上游、首字耗时、输出速度和缓存命中率。
+- **调整请求行为**：统一设置错误规则、提前截断流式卡住的请求。还提供实验性代理池，按需开启。
 
 ## 安装与配置
 
-需要支持动态库插件和 JSON ABI v1 的原版 CPA。插件通过原版接口提供功能；原版 v8.0.13 已支持提前截流，错误状态与冷却边界见 [CPA 兼容性说明](docs/cpa-compatibility.md)。先在 CPA 配置中启用插件：
+需要支持动态库插件和 JSON ABI v1 的原版 CPA。已核对 v8.0.13、v8.0.29 的相关接口与错误处理路径，具体范围见 [CPA 兼容性](docs/cpa-compatibility.md)。先在 CPA 配置里启用插件：
 
 ```yaml
 plugins:
@@ -24,57 +34,25 @@ plugins:
 ```
 
 1. 在 CPA 插件市场的 **CLIProxyAPI源（官方源）** 中安装 **ClinePassBridge**。
-2. 打开插件管理页：`/v0/resource/plugins/clinepassbridge/console`。
-3. 在「凭据管理」点击「添加凭据」，填入 Cline Pass API key；账号状态、人工启停和清除冷却也在此页。「错误规则」可统一编辑并同步所有账号，新账号自动沿用。
-4. 在「模型映射」点击「添加模型 → 获取上游模型」，勾选要使用的模型，也可以手动添加映射。
-5. 「代理池」为实验性功能，默认关闭。有需要时再按该页的使用指南配置出口、分组、请求速率和并发上限，然后启用。
+2. 打开管理页 `/v0/resource/plugins/clinepassbridge/console`，在「凭据管理」中添加 Cline Pass API key。
+3. 进入「模型映射」，点击「添加模型 → 获取上游模型」，勾选要用的模型。
+4. 在客户端填入 **CPA 的 API 地址和 CPA 的客户端 API key**，选择刚添加的模型即可。
 
-管理页会尝试沿用 CPA / CPAMP 记住的登录信息。若提示输入密钥，直连 CPA 时填 CPA 管理密钥，经 CPAMP 完整模式访问时填该面板的管理密钥。勾选「在此浏览器记住管理密钥」后，下次打开可继续使用。
+首次安装的模型列表是空的，记得完成第 3 步。导入时，客户端模型名默认去掉 `cline-pass/` 前缀。
 
-首次安装的模型列表为空，需要先添加模型。导入时默认去掉客户端名称的 `cline-pass/` 前缀，上游 ID 保留前缀；模型是否可用取决于账号的套餐权限。
+管理页会尝试复用 CPA / CPAMP 的登录信息。如果提示输入密钥，直连 CPA 时填 CPA 管理密钥，经 CPAMP 完整模式访问时填面板管理密钥。
 
-手动安装可从 [GitHub Releases](https://github.com/xiao-qiu-qiu/ClinePassBridge/releases) 下载与 **CPA 所在系统及架构** 对应的 ZIP 包。发布包覆盖 Linux amd64 / arm64、macOS Intel / Apple Silicon 和 Windows amd64，并提供 `checksums.txt`。
-
-## 账号状态与错误规则
-
-「凭据管理」把参与调度、人工停用、冷却和额度暂停放在账号卡片中展示，可直接启停账号、刷新用量或清除冷却。额度耗尽时显示自动暂停状态和暂停原因。
-
-额度保护依据 Cline 官方用量百分比或明确的额度耗尽响应，任一用量窗口达到 100% 就暂停账号。复查取得新的成功用量结果、确认额度恢复后才解除暂停，重置时间到点只触发复查。已确认属于同一真实账号的多个 API key 共享额度状态，人工停用状态独立保留。更换 API key 后，旧账号的自动额度状态失效。
-
-在「凭据管理 → 错误规则」设置所有插件账号共用的错误处理方式：
-
-- 支持状态码、包含文本和正则条件，从上到下采用首条匹配规则。
-- 可选择「停止」「停止并冷却」「继续」「继续并冷却」，页面提供中文错误原因和动作说明。
-- 点击「保存并同步所有账号」后生效，规则重启保留；同步失败时可查看失败账号并重试。
-- 「恢复默认规则」先修改草稿，保存后生效；清空规则并保存后沿用 CPA 适用的继承规则或默认处理。
-
-统一规则也同步到人工停用和额度暂停的账号。建议在插件页面维护，CPA 单凭据页面的规则修改可能被插件后续刷新覆盖。清除冷却用于重新尝试账号，上游额度仍以实际用量为准。
-
-对于已识别的响应截断与插件闲置截流，插件分别使用 `unexpected EOF` 和 `i/o timeout`，利用原版 CPA v8.0.13 的传输错误识别跳过本次新增账号/模型冷却。该行为覆盖流内错误、首段输出前的错误及非流式聚合，不依赖 CPA 补丁，也不清除已有冷却。 请求仍记为失败；CPA 和客户端分别按自身配置重试，插件不重放已开始的输出。免新增冷却与「重试兼容」开关独立，其他错误仍遵循原规则。RPC 错误状态及版本边界见 [CPA 兼容性说明](docs/cpa-compatibility.md)。
-
-账号卡片按 CPA 返回的信息显示调度状态；宿主提供模型范围时才显示具体模型冷却，缺少范围时显示「调度受限」。完整错误放在悬停详情。上游没有报告完整用量时，日志显示「未报告」；这与明确报告的 0 tokens 不同。
-
-## 实验性通用代理池
-
-代理池用于统一管理多个代理出口。支持标准 HTTP、HTTPS、SOCKS5、SOCKS5h 代理及显式的 `direct` 直连出口，与代理服务品牌无关，可使用 Resin 或其他提供标准代理协议的服务。
-
-**默认关闭**，关闭时普通模型请求沿用 CPA 原有的全局代理或凭据代理设置。开启后，账号指定的独立代理优先，其余请求从启用的出口中轮选；用量查询、上游探测和模型测试也使用对应出口。
-
-同一个实际出口 IP 的代理应放入同一分组，共享每 60 秒请求数和最大同时进行请求数。页面可查看预算占用与冷却状态；流式请求在结束前持续占用并发名额。池内暂无可用容量时按配置等待，超时返回限流错误，代理失败或池耗尽时保持所选出口策略。
-
-配置步骤和字段含义见「代理池」页的使用指南，详细行为见 [调度与代理出口](docs/scheduling.md)。
+也可以从 [Releases](https://github.com/xiao-qiu-qiu/ClinePassBridge/releases) 下载 ZIP 手动安装。按 **运行 CPA 的系统和架构** 选择：Linux / macOS 支持 amd64、arm64，Windows 支持 amd64。每次发布附带 `checksums.txt`。
 
 ## 调用模型
 
-客户端使用 CPA 的 API 地址和客户端 API key。请求中的 `model` 要与管理页的「客户端模型名称」一致。
-
-例如，添加以下映射：
+假设你添加了这条模型映射：
 
 | 客户端模型名称 | 上游模型 ID |
 | --- | --- |
 | `deepseek-flash` | `cline-pass/deepseek-v4.1-flash` |
 
-然后向 CPA 的 `/v1/chat/completions` 发送：
+向 CPA 的 `/v1/chat/completions` 发送请求，`model` 填客户端模型名称：
 
 ```json
 {
@@ -84,38 +62,31 @@ plugins:
 }
 ```
 
-几个常用设置：
+## 用之前看一眼
 
-- **非流式模式**：默认 `stream-aggregate`，客户端收到普通 JSON，上游仍使用流式请求。
-- **请求超时**：新装默认 600 秒。升级会保留原设置，长任务可在「请求与日志设置」中调高。
-- **重试兼容**：默认开启，将特定 Fireworks/LiteLLM 截断错误规范为含 `HTTP 502` 的服务端错误文案。原版 CPA 的字符串流错误按默认 500 封装；已开始的 HTTP 200 响应保持原状态。请求仍然失败，客户端可按配置重试 5xx，DSH 的既有规则将该文案归为 `SERVER`。在「配置概览 → 重试兼容」调整并保存，完整报错保留在日志；关闭开关可保留原始报错，指定流错误的宿主冷却兼容识别词仍保留。
-- **流式卡住时提前截流**：默认开启，空闲阈值为 10 秒，从首段有效输出后开始计时，不缩短首字等待。设置位于「配置概览」右侧「重试兼容」卡片下方的独立区域，可调整开关和秒数、查看圈 i 说明并独立保存；计时、错误与适用范围见 [进阶配置](docs/configuration.md#流式卡住时提前截流)。
-- **思考强度映射**：默认关闭，按模型单独配置。例如将 `medium` 映射为 `high`，日志会显示 `medium → high`。
-- **账号优先级**：数值越大越优先，实际调度由 CPA 决定。调整后若希望已有对话重新选账号，可在「凭据管理」点击「重新分配会话」。
+- **流式卡住时提前截流默认关闭。** 开启后，从首段有效输出后计时，默认连续 20 秒没有新的有效输出才触发；向下游发送的耗时不计入空闲时间，不缩短首字等待。开关和时长在「配置概览」里调整，已保存的 `true` / `false` 和自定义秒数升级后继续保留。
+- **Debug 默认关闭。** 按需开启额外流诊断；普通请求日志、错误和用量照常记录，详见 [进阶配置](docs/configuration.md#流式卡住时提前截流)。
+- **升级前保留数据。** 容器部署请持久化插件目录、CPA 的 `auth-dir` 和插件数据目录（默认 `plugins/clinepassbridge-data`），升级前备份。
 
-模型测试会消耗所选账号的少量额度。它直接调用 Cline；要确认 CPA 全局规则是否生效，需要通过客户端发起正式请求。
+更多设置和细节放在下面，遇到需要时再查：
 
-插件独立打开且没有保存主题设置时默认使用纯白；嵌入 CPA 时跟随宿主主题，已保存的主题设置继续生效。
-
-## 文档
-
-- [进阶配置](docs/configuration.md)：登录与备份、上游选择、思考强度映射、统一错误规则、日志和限流。
-- [套餐用量](docs/plan-usage.md)：用量查询、额度估计的计算方式和误差。
-- [调度与代理出口](docs/scheduling.md)：固定额度保护、凭据启停、实验性通用代理池、本地限流和冷却恢复。
-- [CPA 兼容性说明](docs/cpa-compatibility.md)：原版接口支持、流错误状态、客户端重试与冷却边界。
-
-容器部署时，请持久化插件目录、CPA 的 `auth-dir` 和插件数据目录（默认 `plugins/clinepassbridge-data`）。API key 和自动额度状态保存在 `auth-dir`；配置、日志、统计、统一错误规则（`error-rules.json`）及代理池配置（`egress.json`）保存在插件数据目录。升级前请备份这些目录，代理认证随代理池配置保存。
+| 文档 | 内容 |
+| --- | --- |
+| [进阶配置](docs/configuration.md) | 登录、备份、上游选择、思考强度、错误规则和日志 |
+| [套餐用量](docs/plan-usage.md) | 用量查询、额度估计和误差 |
+| [调度与代理出口](docs/scheduling.md) | 账号调度、额度保护、代理池和限流 |
+| [CPA 兼容性](docs/cpa-compatibility.md) | 支持的接口、流式错误、重试和冷却行为 |
 
 ## 从源码构建
 
-在仓库根目录执行以下命令，需要 Docker，产物为 `dist/clinepassbridge.so`（Linux amd64）：
+项目使用 Go 1.26。装好 Docker 后，在仓库根目录执行：
 
 ```bash
 docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest=dist .
 ```
 
-项目使用 Go 1.26。[发布工作流](.github/workflows/release.yml) 构建 Linux、macOS 的 amd64 / arm64 和 Windows amd64，并生成 ZIP 包与 `checksums.txt`。
+产物是 `dist/clinepassbridge.so`（Linux amd64）。其他平台的构建方式见 [发布工作流](.github/workflows/release.yml)。
 
-## 许可
+## 许可与致谢
 
-[MIT License](LICENSE)。独立实现，曾参考 [`cline-pass-switcher`](https://github.com/munmunjaklin458-afk/cline-pass-switcher) 的公开协议行为，未复制其代码。
+[MIT License](LICENSE)。项目独立实现，曾参考 [cline-pass-switcher](https://github.com/munmunjaklin458-afk/cline-pass-switcher) 的公开协议行为，未复制其代码。

@@ -31,8 +31,8 @@ func TestUpstreamErrorClassification(t *testing.T) {
 		{"bad header", "busy", "", "upstream_rate_limited", 429, 429, "NaN", time.Minute},
 		{"quota", "quota exhausted", "insufficient_quota", "upstream_quota_exhausted", 429, 429, "", 0},
 		{"authentication wins", teamLimitMessage, "", "upstream_auth_error", 401, 401, "", 0},
-		{"unrelated digits", "request 429 failed but server is unavailable", "", "upstream_error", 200, 502, "", 0},
-		{"server error", "service unavailable", "", "upstream_error", 503, 503, "", 0},
+		{"unrelated digits", "request 429 failed but server is unavailable", "", upstreamServiceKind, 200, 502, "", 0},
+		{"server error", "service unavailable", "", upstreamServiceKind, 503, 503, "", 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := classifyUpstreamError(tt.httpStatus, http.Header{"Retry-After": []string{tt.header}}, map[string]any{"error": map[string]any{"message": tt.message, "code": tt.code}}, now)

@@ -275,7 +275,7 @@
     .estimate-actual { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .estimate-sample-state { display: block; font-size: 11px; }
     .credential-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
-    .credential-footer .pagination { margin: 0; }
+    .credential-footer .pagination { margin: 0 0 0 auto; }
     @media (max-width: 860px) { .credential-row { grid-template-columns: 1fr; gap: 12px; } .credential-estimate-band { grid-template-columns: 1fr; gap: 8px; } .usage-meters { gap: 12px; } }
     @media (max-width: 480px) { .credential-bottom { align-items: flex-start; flex-direction: column; gap: 8px; } .credential-plan { font-size: 10px; } .usage-meter-head { font-size: 11px; } }
 
@@ -285,6 +285,7 @@
     .form-stack { display: grid; gap: 12px; margin-top: 15px; }
     .field { display: grid; gap: 5px; min-width: 0; }
     .field label { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .field .retry-compat-switch { font-size: 14px; line-height: 1.5; color: var(--ink); }
     .field .control { width: 100%; }
     .field-line { align-items: end; justify-content: space-between; }
     .field-line .field { flex: 1; }
@@ -427,6 +428,19 @@
     .credential-row { position: relative; isolation: isolate; }
     .credential-row.quota-paused { border-color: color-mix(in srgb, #dc5252 45%, var(--line)); }
     .credential-row.quota-paused::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit; background: color-mix(in srgb, #dc5252 9%, transparent); }
+    .credential-row.quota-paused { padding-right: 54px; }
+    .credential-collapse-toggle { position: absolute; right: 8px; top: 8px; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+    .credential-collapse-toggle:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+    .credential-collapse-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .credential-collapse-toggle svg { width: 18px; height: 18px; transform: rotate(90deg); }
+    .credential-collapsed { cursor: pointer; }
+    .credential-collapsed .credential-collapse-toggle svg { transform: rotate(0); }
+    .credential-collapsed .credential-schedule-detail,
+    .credential-collapsed .credential-status,
+    .credential-collapsed .credential-estimate-band,
+    .credential-collapsed .credential-bottom { display: none; }
+    .credential-collapsed .credential-main { align-self: center; }
+    .credential-collapsed .usage-meters { align-self: center; }
     .credential-bottom .row-actions { flex-wrap: wrap; }
     .credential-toggle { position: relative; display: inline-flex; align-items: center; gap: 10px; min-height: 36px; color: var(--muted); cursor: pointer; font-size: 12px; }
     .credential-toggle input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
@@ -583,7 +597,7 @@
           <span class="count" id="credentialCount"></span>
         </div>
         <div id="credentialList"><div class="empty">正在读取凭据…</div></div>
-        <div class="credential-footer"><p class="panel-hint">后台按账号约每分钟采样 · 时间为本地时区</p><div class="pagination" id="credentialPagination" hidden><button class="button compact" id="credentialPrev" type="button">上一页</button><span id="credentialPageInfo"></span><button class="button compact" id="credentialNext" type="button">下一页</button></div></div>
+        <div class="credential-footer"><div class="pagination" id="credentialPagination" hidden><button class="button compact" id="credentialPrev" type="button">上一页</button><span id="credentialPageInfo"></span><button class="button compact" id="credentialNext" type="button">下一页</button></div></div>
         <p class="inline-state" id="credentialState" role="status"></p>
       </div>
     </section>
@@ -618,6 +632,7 @@
             <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
             <div class="field"><label for="timeoutSeconds">请求总时长上限（秒）</label><input class="control" id="timeoutSeconds" type="number" min="10" max="1800" step="1" required><div class="panel-hint">包含思考与输出，新装默认 600 秒。旧设置若为 180 秒，长任务可调至 600 秒或更高。</div></div>
             <div class="field"><label for="logRetention">日志保留条数</label><input class="control" id="logRetention" type="number" min="50" max="10000" step="1" required></div>
+            <div class="field"><label class="retry-compat-switch" for="debugEnabled" title="默认关闭。开启后记录并显示流式时序、输出类型和下游发送耗时；关闭后停止记录并隐藏历史诊断，普通请求日志保留。保存后生效。"><span>Debug 诊断</span><input id="debugEnabled" type="checkbox" role="switch"></label></div>
             <div class="form-foot"><button class="button primary" id="saveSettings" type="submit">保存设置</button></div>
           </form>
           <p class="inline-state" id="settingsState"></p>
@@ -643,9 +658,9 @@
             </div>
             <form class="form-stack" id="streamIdleForm" aria-labelledby="streamIdleHeading">
               <div class="field">
-                <label class="retry-compat-switch" for="streamIdleCutoffEnabled"><span>启用提前截流</span><input id="streamIdleCutoffEnabled" type="checkbox" role="switch" checked></label>
+                <label class="retry-compat-switch" for="streamIdleCutoffEnabled"><span>启用提前截流</span><input id="streamIdleCutoffEnabled" type="checkbox" role="switch"></label>
               </div>
-              <div class="field"><label for="streamIdleTimeoutSeconds">无新输出等待时间（秒）</label><input class="control" id="streamIdleTimeoutSeconds" type="number" min="1" max="1800" step="1" value="10" required></div>
+              <div class="field"><label for="streamIdleTimeoutSeconds">无新输出等待时间（秒）</label><input class="control" id="streamIdleTimeoutSeconds" type="number" min="1" max="1800" step="1" value="20" required></div>
               <div class="form-foot"><button class="button primary" id="saveStreamIdle" type="submit">保存设置</button></div>
             </form>
             <p class="inline-state" id="streamIdleState" role="status"></p>
@@ -661,8 +676,8 @@
 
   <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
     <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus>关闭</button></div>
-    <p>简化 Fireworks / LiteLLM 响应截断的错误文案，避免原版 DSH 等客户端被嵌套的 400 误导，便于识别为可重试的服务端错误。</p>
-    <p>默认开启。关闭后保留原始报错文案；已识别的响应截断与闲置截流仍保留免冷却兼容，避免在原版 CPA v8.0.13 新增凭据或模型冷却。完整错误始终保留在请求日志中，已有冷却继续保留。</p>
+    <p>简化上游服务、协议与连接故障的错误文案，避免客户端被嵌套状态码误导，便于识别为可重试的服务端错误。</p>
+    <p>默认开启。关闭后尽量保留原始报错；上游 5xx、断流、网络失败和本地截流仍保留免冷却兼容。鉴权、限流和额度保护继续生效。完整诊断留在请求日志，已有冷却继续保留。</p>
     <p>CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
     <p>调整后点击「保存设置」生效。</p>
   </dialog>
@@ -671,7 +686,7 @@
     <div class="panel-head"><h2 id="streamIdleTitle">流式卡住时提前截流</h2><button class="button compact" id="closeStreamIdleHelp" type="button" autofocus>关闭</button></div>
     <p>收到首段有效输出后，如果连续达到设定时间没有新输出，就主动截断当前流并报告服务端错误，让客户端尽快进入自己的重试流程。</p>
     <p>思考内容、正文和工具调用的有效增量都会重新计时；心跳和空帧不算新输出。等待首段输出时仍使用请求总时长上限。</p>
-    <p>默认开启，等待 10 秒，可设为 1–1800 秒。适用于所有上游流式回复，正常回复中的长暂停也会触发。关闭后仍保留请求总时长上限。</p>
+    <p>默认关闭。开启后默认等待 20 秒，可设为 1–1800 秒。适用于所有上游流式回复，正常回复中的长暂停也会触发。关闭时仍保留请求总时长上限，升级保留已保存的开关和秒数。</p>
     <p>点击本栏「保存设置」后对后续请求生效。截流仍记为失败并保留日志，通过原版 CPA v8.0.13 的免冷却兼容避免新增凭据或模型冷却；已有冷却继续保留。CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
   </dialog>
 
@@ -1167,11 +1182,13 @@
       return provider.toLowerCase() === 'unknown' ? '' : provider;
     }
     function datum(label, value, fallback = '未记录') { return `<div><div class="datum-label">${label}</div><div class="datum-value">${shown(value, fallback)}</div></div>`; }
+    function streamFrameLabel(kind) { return ({text: '正文', whitespace: '空白 / 换行', reasoning: '思考', tool: '工具调用', refusal: '拒绝内容', finish: '结束原因', done: '结束标记', error: '错误', metadata: '元数据 / 空增量'})[kind] || '未记录'; }
     function reasoningText(log) {
       const mapping = log.reasoning_mapping;
       return mapping ? `${reasoningLabel(mapping.from)} → ${reasoningLabel(mapping.to)}` : log.reasoning_effort || '—';
     }
     function logMarkup(log) {
+      const debug = state.logDebug === true ? log.stream_diagnostics : null;
       const status = statusInfo(log.status);
       const local = log.upstream_skipped === true;
       const count = Number.isInteger(log.request_count) && log.request_count > 0 ? log.request_count : 1;
@@ -1227,6 +1244,14 @@
             ${limited ? datum('重试状态', limitLabel) + datum('限流范围', log.rate_limit_scope === 'upstream_team' ? '上游团队' : '当前凭据 / 模型') : ''}
           </div>
           ${present(log.error) ? `<div class="attempts"><div class="datum-label">请求错误</div><div class="error-text">${esc(log.error)}</div></div>` : ''}
+          ${debug ? `<div class="attempts"><strong>Debug 诊断</strong><div class="detail-grid">
+            ${datum('本次截流阈值', debug.idle_timeout_seconds > 0 ? `${debug.idle_timeout_seconds} 秒` : '关闭')}
+            ${datum('上游空闲计时（扣除下游发送）', `${number(debug.idle_wait_ms)} ms`)}
+            ${debug.last_upstream_byte_at ? datum('最近读到上游数据', formatTime(debug.last_upstream_byte_at)) : ''}
+            ${debug.last_frame_kind ? datum('最后一帧类型', streamFrameLabel(debug.last_frame_kind)) : ''}
+            ${debug.first_effective_kind ? datum('首段 / 最后有效输出类型', `${streamFrameLabel(debug.first_effective_kind)} / ${streamFrameLabel(debug.last_effective_kind)}`) : ''}
+            ${datum('下游发送耗时（累计 / 最长）', `${number(debug.downstream_emit_ms)} / ${number(debug.downstream_emit_max_ms)} ms`)}
+          </div></div>` : ''}
           <div class="attempts"><strong>尝试明细 · ${attempts.length}</strong>${attemptMarkup}</div>
         </div></details>`;
     }
@@ -1351,6 +1376,7 @@
       try {
         const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value }, signal: controller.signal });
         if (controller !== state.logsController) return;
+        state.logDebug = data?.debug === true;
         const items = Array.isArray(data?.items) ? data.items : [];
         state.total = Number.isFinite(Number(data?.total)) ? Number(data.total) : items.length;
         if (Number.isInteger(data?.offset) && data.offset >= 0) state.page = Math.floor(data.offset / PAGE_SIZE);
@@ -1624,7 +1650,37 @@
       $('clearCandidates').disabled = state.candidateBusy || !visible.some((m) => state.selectedCandidates.has(modelKey(m)));
     }
     const CREDENTIAL_PAGE_SIZE = 12;
-    const credentialView = { items: [], page: 0, visible: [], usage: new Map(), pending: new Map(), queue: new Map(), active: 0 };
+    const credentialView = { items: [], page: 0, visible: [], usage: new Map(), pending: new Map(), queue: new Map(), active: 0, expanded: new Set() };
+    function syncCredentialCollapse(row, item) {
+      const paused = credentialQuotaPaused(item);
+      if (!paused) credentialView.expanded.delete(item.id);
+      const collapsed = paused && !credentialView.expanded.has(item.id);
+      row.classList.toggle('quota-paused', paused);
+      row.classList.toggle('credential-collapsed', collapsed);
+      let button = row.querySelector('.credential-collapse-toggle');
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'credential-collapse-toggle';
+        button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
+        row.appendChild(button);
+      }
+      button.hidden = !paused;
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.setAttribute('aria-label', `${collapsed ? '展开' : '收起'} ${item.label || item.id}`);
+      button.title = collapsed ? '展开凭据详情' : '收起凭据详情';
+    }
+    $('credentialList').addEventListener('click', (event) => {
+      const row = event.target.closest('.credential-row');
+      if (!row) return;
+      const button = event.target.closest('.credential-collapse-toggle');
+      if (!button && (!row.classList.contains('credential-collapsed') || event.target.closest('button, a, input, label'))) return;
+      const item = credentialView.items.find((entry) => entry.id === row.dataset.id);
+      if (!item || !credentialQuotaPaused(item)) return;
+      if (credentialView.expanded.has(item.id)) credentialView.expanded.delete(item.id);
+      else credentialView.expanded.add(item.id);
+      syncCredentialCollapse(row, item);
+    });
     const clearAffinity = { busy: false };
     function syncClearAffinityControls() {
       const enabled = credentialView.items.filter((item) => item.enabled !== false).sort((a, b) => (b.priority || 0) - (a.priority || 0));
@@ -1786,6 +1842,7 @@
         const ids = new Set(credentialView.items.map((item) => item.id));
         for (const id of credentialView.usage.keys()) if (!ids.has(id)) credentialView.usage.delete(id);
         for (const id of credentialView.pending.keys()) if (!ids.has(id)) credentialView.pending.delete(id);
+        for (const id of credentialView.expanded) if (!ids.has(id)) credentialView.expanded.delete(id);
         refreshEstimateDialog();
         syncModelTestCredentials();
         syncClearAffinityControls();
@@ -1803,6 +1860,10 @@
       for (const id of credentialView.queue.keys()) if (!visibleIDs.has(id)) credentialView.queue.delete(id);
       $('credentialList').innerHTML = credentialView.visible.length ? credentialView.visible.map((item) => `<div class="credential-row${credentialQuotaPaused(item) ? ' quota-paused' : ''}" data-id="${esc(item.id)}"><div class="credential-main"><div class="credential-title"><span class="primary-text" title="${esc(item.label)}">${shown(item.label, '未命名')}</span><span class="credential-schedule-badges">${credentialScheduleBadges(item)}</span></div><div class="subtext mono credential-id" title="${esc(item.id)}">${esc(item.id)}</div>${present(item.priority) && Number(item.priority) !== 0 ? `<div class="subtext"><span class="badge">优先级 ${esc(item.priority)}</span></div>` : ''}<div class="credential-schedule-detail">${credentialScheduleDetail(item)}</div><div class="credential-status">${usageStatusHTML(item)}</div></div><div class="credential-usage">${usageHTML(item)}</div><div class="credential-bottom"><div class="credential-plan">${usagePlanHTML(item.id)}</div><div class="row-actions">${credentialToggleHTML(item)}<button class="button compact reset-cooldown" type="button" data-id="${esc(item.id)}" ${item.enabled === false || credentialToggleState(item).disabled ? 'disabled' : ''} title="清除插件与宿主冷却，不改变上游额度">清除冷却</button><button class="button compact refresh-usage" type="button" data-id="${esc(item.id)}" ${credentialView.pending.has(item.id) ? 'disabled' : ''}>刷新</button><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div></div>`).join('') : `<div class="empty">${query ? '没有匹配的凭据' : '尚未添加凭据'}</div>`;
       $('credentialCount').textContent = query ? `${filtered.length} / ${credentialView.items.length} 个凭据` : `${filtered.length} 个凭据`;
+      for (const row of $('credentialList').children) {
+        const item = credentialView.visible.find((entry) => entry.id === row.dataset.id);
+        if (item) syncCredentialCollapse(row, item);
+      }
       $('credentialPagination').hidden = pages <= 1;
       $('credentialPageInfo').textContent = `${credentialView.page + 1} / ${pages} 页`;
       $('credentialPrev').disabled = credentialView.page === 0;
@@ -1860,12 +1921,13 @@
         $('nonstreamMode').value = ['native', 'native-fallback', 'stream-aggregate'].includes(config?.nonstream_mode) ? config.nonstream_mode : 'stream-aggregate';
         dropdowns.get('nonstreamMode').sync();
         $('clientRetryCompatibility').checked = config?.client_retry_compatibility !== false;
-        $('streamIdleCutoffEnabled').checked = config?.stream_idle_cutoff_enabled !== false;
-        $('streamIdleTimeoutSeconds').value = present(config?.stream_idle_timeout_seconds) ? config.stream_idle_timeout_seconds : 10;
+        $('streamIdleCutoffEnabled').checked = config?.stream_idle_cutoff_enabled === true;
+        $('streamIdleTimeoutSeconds').value = present(config?.stream_idle_timeout_seconds) ? config.stream_idle_timeout_seconds : 20;
         $('providerPolicy').value = config?.provider_policy === 'client' ? 'client' : 'config';
         dropdowns.get('providerPolicy').sync();
         $('timeoutSeconds').value = present(config?.timeout_seconds) ? config.timeout_seconds : 600;
         $('logRetention').value = present(config?.log_retention) ? config.log_retention : 500;
+        $('debugEnabled').checked = config?.debug === true;
         renderModels(models);
         resetModelForm();
         renderCredentials(credentials);
@@ -1881,6 +1943,7 @@
       } catch (error) { globalError(`配置读取失败：${error.message}`); }
     }
     function setTab(name) {
+      if (name === 'credentials' && $('credentialsPanel').hidden) credentialView.expanded.clear();
       for (const tab of ['logs', 'pin', 'credentials', 'models', 'egress', 'config']) {
         $(`${tab}Tab`).setAttribute('aria-selected', String(tab === name));
         $(`${tab}Panel`).hidden = tab !== name;
@@ -1888,7 +1951,7 @@
       if (name !== 'credentials') credentialView.queue.clear();
       if (name === 'egress') loadEgress();
       else if (name !== 'logs') loadConfig();
-      else loadStatistics();
+      else { loadLogs(); loadStatistics(); }
     }
     $('openPinEvidence').addEventListener('click', () => $('pinEvidenceDialog').showModal());
     $('openRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').showModal());
@@ -2270,10 +2333,10 @@
         $('settingsState').textContent = '超时需为 10–1800 秒，日志保留需为 50–10000 条';
         return;
       }
-      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention };
+      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention, debug: $('debugEnabled').checked };
       $('saveSettings').disabled = true;
       $('settingsState').textContent = '正在保存…';
-      try { state.config = await api('/config', { method: 'PUT', body: next }); $('settingsState').textContent = '设置已保存'; }
+      try { state.config = await api('/config', { method: 'PUT', body: next }); state.logDebug = state.config?.debug === true; loadLogs(); $('settingsState').textContent = '设置已保存'; }
       catch (error) { $('settingsState').textContent = `保存失败：${error.message}`; }
       finally { $('saveSettings').disabled = false; }
     });

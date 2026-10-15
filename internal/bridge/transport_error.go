@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strings"
 	"syscall"
 )
 
@@ -16,8 +17,8 @@ const upstreamNetworkKind = "upstream_network_error"
 
 var transportURLPattern = regexp.MustCompile(`(?i)\b(?:https?|socks5h?)://[^\s<>"']+`)
 
-// Legacy hosts provide only text. Keep useful diagnostics without promoting
-// text to a typed fault, and remove URL credentials/query/path fragments.
+// Legacy hosts provide only text. Preserve diagnostics without guessing a
+// network subtype, and remove URL credentials/query/path fragments.
 func legacyTransportMessage(err error, message string) string {
 	if err == nil {
 		return message
@@ -40,7 +41,8 @@ func legacyTransportDetail(err error) string {
 
 func callbackTransportDiagnostic(err error, details *httpErrorDetails, fault error) string {
 	var api *APIError
-	if details == nil && errors.As(fault, &api) && api.Kind == "upstream_error" {
+	var upstream *upstreamError
+	if details == nil && ((errors.As(fault, &upstream) && upstream.Kind == upstreamCallbackKind) || (errors.As(fault, &api) && api.Kind == "upstream_error")) {
 		return legacyTransportDetail(err)
 	}
 	return fault.Error()
@@ -71,7 +73,7 @@ func networkFaultKind(kind string) bool {
 }
 
 // Stable code/status pairs are accepted only from structured callback metadata
-// or a typed error. Legacy callback strings never establish exemption.
+// or a typed error. Legacy callbacks retain their broader callback-source kind.
 func structuredHTTPFault(details *httpErrorDetails, message string) error {
 	if details == nil {
 		return nil
@@ -158,5 +160,16 @@ func typedTransportFault(ctx context.Context, err error, message string) error {
 	if kind != "" {
 		return upstreamNetworkFailure(kind, message)
 	}
-	return fail(502, legacyTransportMessage(err, message))
+	// The callback boundary establishes the source even when a stock host has
+	// erased the Go error type. This is not an upstream HTTP response body.
+	if err != nil {
+		text := strings.TrimSpace(err.Error())
+		if text == "context canceled" || strings.HasSuffix(text, ": context canceled") {
+			return requestCanceled(legacyTransportMessage(err, message))
+		}
+		if text == "context deadline exceeded" || strings.HasSuffix(text, ": context deadline exceeded") {
+			return requestTimedOut(legacyTransportMessage(err, message))
+		}
+	}
+	return requestFault(502, upstreamCallbackKind, legacyTransportMessage(err, message))
 }

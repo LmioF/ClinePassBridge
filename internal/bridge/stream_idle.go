@@ -8,18 +8,22 @@ import (
 // One goroutine owns the timer. Activity changes the deadline under the same
 // lock used to check expiry, so a stale timer tick cannot cut off fresh output.
 type streamReadWatchdog struct {
-	mu          sync.Mutex
-	deadline    time.Time
-	idleTimeout time.Duration
-	lastOutput  time.Time
-	err         error
-	stopped     bool
-	wake        chan struct{}
-	stopCh      chan struct{}
-	done        chan struct{}
-	closeOnce   sync.Once
-	closeStream func()
-	parentError func() error
+	mu           sync.Mutex
+	deadline     time.Time
+	idleTimeout  time.Duration
+	lastOutput   time.Time
+	downstream   bool
+	emitElapsed  time.Duration
+	diagnostics  *StreamDiagnostics
+	debugEnabled func() bool
+	err          error
+	stopped      bool
+	wake         chan struct{}
+	stopCh       chan struct{}
+	done         chan struct{}
+	closeOnce    sync.Once
+	closeStream  func()
+	parentError  func() error
 }
 
 func (s *Service) newStreamReadWatchdog(up upstreamStream, idleTimeout time.Duration) *streamReadWatchdog {
@@ -29,7 +33,8 @@ func (s *Service) newStreamReadWatchdog(up upstreamStream, idleTimeout time.Dura
 	}
 	w := &streamReadWatchdog{
 		deadline: deadline, idleTimeout: idleTimeout,
-		wake: make(chan struct{}, 1), stopCh: make(chan struct{}), done: make(chan struct{}),
+		debugEnabled: s.debugEnabled,
+		wake:         make(chan struct{}, 1), stopCh: make(chan struct{}), done: make(chan struct{}),
 		closeStream: func() { s.closeUpstream(up.StreamID) },
 	}
 	if up.local != nil {
@@ -43,6 +48,15 @@ func (s *Service) newStreamReadWatchdog(up upstreamStream, idleTimeout time.Dura
 	return w
 }
 
+// Only the stream consumer touches diagnostics. Once disabled, this request
+// stops collecting even if debug is enabled again before it completes.
+func (w *streamReadWatchdog) streamDiagnostics() *StreamDiagnostics {
+	if w.diagnostics != nil && !w.debugEnabled() {
+		w.diagnostics = nil
+	}
+	return w.diagnostics
+}
+
 func (w *streamReadWatchdog) expired(now time.Time) error {
 	if w.parentError != nil {
 		if err := w.parentError(); err != nil {
@@ -52,10 +66,60 @@ func (w *streamReadWatchdog) expired(now time.Time) error {
 	if !now.Before(w.deadline) {
 		return requestTimedOut("Cline upstream request timed out")
 	}
-	if w.idleTimeout > 0 && !w.lastOutput.IsZero() && !now.Before(w.lastOutput.Add(w.idleTimeout)) {
+	if !w.downstream && w.idleTimeout > 0 && !w.lastOutput.IsZero() && !now.Before(w.lastOutput.Add(w.idleTimeout)) {
 		return streamIdleTimeout(w.idleTimeout)
 	}
 	return nil
+}
+
+// Downstream backpressure is not upstream inactivity. Preserve the already-used
+// idle budget while suspending it, and keep the absolute deadline active.
+func (w *streamReadWatchdog) emit(fn func() error) (err error) {
+	w.mu.Lock()
+	if w.err == nil {
+		w.err = w.expired(time.Now())
+	}
+	if w.err != nil {
+		err = w.err
+		w.mu.Unlock()
+		return err
+	}
+	started := time.Now()
+	w.downstream = true
+	w.mu.Unlock()
+	w.notify()
+	defer func() {
+		w.mu.Lock()
+		elapsed := time.Since(started)
+		if !w.lastOutput.IsZero() {
+			w.lastOutput = w.lastOutput.Add(elapsed)
+		}
+		w.downstream = false
+		if w.err == nil {
+			w.err = w.expired(time.Now())
+		}
+		if err == nil {
+			err = w.err
+		}
+		w.mu.Unlock()
+		if d := w.streamDiagnostics(); d != nil {
+			w.emitElapsed += elapsed
+			d.DownstreamEmitCount++
+			d.DownstreamEmitMS = w.emitElapsed.Milliseconds()
+			if elapsed.Milliseconds() > d.DownstreamEmitMaxMS {
+				d.DownstreamEmitMaxMS = elapsed.Milliseconds()
+			}
+		}
+		w.notify()
+	}()
+	return fn()
+}
+
+func (w *streamReadWatchdog) notify() {
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (w *streamReadWatchdog) effectiveOutput() error {
@@ -69,10 +133,7 @@ func (w *streamReadWatchdog) effectiveOutput() error {
 	if w.err == nil && w.idleTimeout > 0 {
 		w.lastOutput = now
 	}
-	select {
-	case w.wake <- struct{}{}:
-	default:
-	}
+	w.notify()
 	return w.err
 }
 
@@ -95,7 +156,7 @@ func (w *streamReadWatchdog) run() {
 			return
 		}
 		next := w.deadline
-		if w.idleTimeout > 0 && !w.lastOutput.IsZero() {
+		if !w.downstream && w.idleTimeout > 0 && !w.lastOutput.IsZero() {
 			if idleDeadline := w.lastOutput.Add(w.idleTimeout); idleDeadline.Before(next) {
 				next = idleDeadline
 			}

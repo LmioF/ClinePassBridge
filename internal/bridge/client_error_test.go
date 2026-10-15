@@ -70,7 +70,7 @@ func TestStreamCooldownMarkersPreserveOtherFaults(t *testing.T) {
 	s.SetHost(h.call)
 	for _, enabled := range []bool{false, true} {
 		s.cfg.ClientRetryCompatibility = enabled
-		for _, status := range []int{400, 401, 402, 403, 429, 502, 504} {
+		for _, status := range []int{400, 401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": "original upstream error"}, time.Now())
 			s.closeOutputStream("client-stream", &LogEntry{}, err)
 			if h.clientError != safeError(err) {
@@ -114,18 +114,25 @@ func TestHostErrorDetailsAvoidsCooldownBeforeStreamHandoff(t *testing.T) {
 				t.Fatal("wire compatibility changed diagnostic status")
 			}
 		}
-		for _, status := range []int{400, 401, 402, 403, 429, 502, 504} {
+		for _, status := range []int{400, 401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": "ordinary upstream error"}, time.Now())
 			message, gotStatus := s.HostErrorDetails(err)
 			if gotStatus != status || message != safeError(err) {
 				t.Fatalf("unrelated RPC error changed: status=%d message=%q", gotStatus, message)
 			}
 		}
+		for _, status := range []int{502, 504} {
+			err := fail(status, "unclassified local failure")
+			message, gotStatus := s.HostErrorDetails(err)
+			if gotStatus != status || message != safeError(err) {
+				t.Fatalf("unclassified fault acquired exemption: status=%d message=%q", gotStatus, message)
+			}
+		}
 	}
 }
 
 func TestClientErrorKeepsOtherFaults(t *testing.T) {
-	for _, status := range []int{400, 401, 402, 403, 429, 502, 504} {
+	for _, status := range []int{400, 401, 402, 403, 429} {
 		err := classifyUpstreamError(status, nil, map[string]any{"error": "original upstream error"}, time.Now())
 		if ClientErrorMessage(err) != safeError(err) {
 			t.Fatalf("ordinary status %d was rewritten", status)

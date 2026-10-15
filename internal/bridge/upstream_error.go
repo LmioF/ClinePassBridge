@@ -50,8 +50,12 @@ func (e *upstreamError) IsRequestScoped() bool {
 	if e == nil || e.Status == 401 || e.Status == 402 || e.Status == 403 || e.Status == 429 {
 		return false
 	}
+	if e.Scope != "request" {
+		return false
+	}
 	switch e.Kind {
-	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind, upstreamStreamIdleTimeoutKind:
+	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind, upstreamStreamIdleTimeoutKind,
+		upstreamServiceKind, upstreamProtocolKind, upstreamCallbackKind, responseLimitKind, bridgeUnavailableKind:
 		return true
 	default:
 		return false
@@ -127,12 +131,41 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 			}
 		}
 	}
+	// Some gateways wrap a real auth/quota/rate failure in HTTP 200 or 5xx.
+	// Explicit protected statuses win over the generic service-failure policy.
+	if status != 401 && status != 402 && status != 403 && status != 429 {
+		for _, value := range []any{detail["status"], detail["status_code"], body["status"], body["status_code"]} {
+			n := number(value)
+			if text, ok := value.(string); ok {
+				n, _ = strconv.ParseInt(text, 10, 64)
+			}
+			if n == 401 || n == 402 || n == 403 || n == 429 {
+				status = int(n)
+				break
+			}
+		}
+	}
+	if status >= 500 && status <= 599 {
+		for _, value := range []any{detail["code"], detail["type"], body["code"], body["type"]} {
+			switch strings.ToLower(str(value)) {
+			case "authentication_error", "invalid_api_key":
+				status = 401
+			case "permission_error", "permission_denied", "insufficient_permissions":
+				status = 403
+			case "rate_limit_error", "rate_limit_exceeded":
+				status = 429
+			}
+			if status < 500 {
+				break
+			}
+		}
+	}
 	team := strings.Contains(lower, "this team's limit") && strings.Contains(lower, "tokens per minute")
 	quotaType := quotaErrorType(code, message)
 	quota := !team && quotaType != "" && status != 401 && status != 403
 	rate := !quota && (status == 429 || strings.Contains(code, "rate_limit_exceeded") || wrappedRateLimit.MatchString(message))
 	// An actual authentication response must never become an exempt rate limit.
-	if status == 401 || status == 403 {
+	if status == 401 || status == 402 || status == 403 {
 		rate = false
 	}
 	result := &upstreamError{HTTPStatus: httpStatus, UpstreamStatus: status}
@@ -157,6 +190,8 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 	case status != 402 && isProviderTransportIncomplete(body):
 		status, result.UpstreamStatus, kind = 502, 502, transportIncompleteKind
 		result.Scope = "request"
+	case status >= 500 && status <= 599:
+		kind, result.Scope = upstreamServiceKind, "request"
 	}
 	result.APIError = &APIError{Status: status, Kind: kind, Message: message}
 	result.Provider, result.ProviderSource = routingFacts(body)

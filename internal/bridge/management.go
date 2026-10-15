@@ -249,6 +249,9 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 			}
 		}
 		v.OutputTokensPerSecond = outputTokenRate(v)
+		if !s.cfg.Debug {
+			v.StreamDiagnostics = nil
+		}
 		filtered = append(filtered, v)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool { return logLastTime(filtered[i]).After(logLastTime(filtered[j])) })
@@ -275,7 +278,7 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 	if end > total {
 		end = total
 	}
-	return managementJSON(200, map[string]any{"items": filtered[offset:end], "total": total, "summary": summary, "offset": offset})
+	return managementJSON(200, map[string]any{"items": filtered[offset:end], "total": total, "summary": summary, "offset": offset, "debug": s.cfg.Debug})
 }
 
 // matchesProvider lets the UI filter by the label it shows for a locally

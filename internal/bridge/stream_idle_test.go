@@ -127,9 +127,7 @@ func TestStreamIdleConsumerLifecycle(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := NewService()
-				if scenario == "disabled" {
-					s.cfg.StreamIdleCutoffEnabled = false
-				}
+				s.cfg.StreamIdleCutoffEnabled = scenario != "disabled"
 				h := newStreamIdleFixture(s)
 				entry, attempt := LogEntry{}, Attempt{}
 				deadline := time.Now().Add(time.Minute)
@@ -243,6 +241,7 @@ func TestStreamIdleExecutorErrorBoundaries(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					s := registeredService(t, "stream-aggregate")
 					s.cfg.ClientRetryCompatibility = compatibility
+					s.cfg.StreamIdleCutoffEnabled = true
 					s.cfg.StreamIdleTimeoutSeconds = 2
 					h := newStreamIdleFixture(s)
 					result := make(chan error, 1)

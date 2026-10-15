@@ -468,7 +468,7 @@ func TestStreamingEmitsMultipleChunksAndHandlesClientCancel(t *testing.T) {
 						t.Fatalf("executor payload must be raw JSON for CPA framing: %q", payload)
 					}
 				}
-			} else if len(emitted) != 1 || !strings.Contains(closeError, "client disconnected") {
+			} else if len(emitted) != 1 || closeError != "context canceled" {
 				t.Fatalf("cancel output = %#v, close error = %q", emitted, closeError)
 			}
 		})

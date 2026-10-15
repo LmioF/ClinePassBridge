@@ -38,8 +38,8 @@ func TestHTTPCallbackTransportFaultsStayRequestScoped(t *testing.T) {
 			}
 		})
 	}
-	if fault := hostHTTPFault(errors.New("connection reset; deadline exceeded"), nil, "upstream transport failed"); fault.(*APIError).Kind != "upstream_error" {
-		t.Fatal("legacy callback text inferred request scope")
+	if fault := hostHTTPFault(errors.New("connection reset; deadline exceeded"), nil, "upstream transport failed"); fault.(*upstreamError).Kind != upstreamCallbackKind {
+		t.Fatal("legacy callback lost its callback source classification")
 	}
 }
 
@@ -63,8 +63,43 @@ func TestHTTPCallbackWireMetadataPreservesResponseStatus(t *testing.T) {
 			if upstream, ok := err.(*upstreamError); !ok || !upstream.IsRequestScoped() || upstream.Kind != upstreamNetworkKind {
 				t.Fatalf("typed read fault = %v", err)
 			}
-		} else if upstream, ok := err.(*upstreamError); !ok || upstream.Status != status || upstream.IsRequestScoped() {
-			t.Fatalf("HTTP %d was replaced by a transport fault: %v", status, err)
+		} else if upstream, ok := err.(*upstreamError); !ok || upstream.Status != status || upstream.IsRequestScoped() != (status >= 500) {
+			t.Fatalf("HTTP %d lost its response policy: %v", status, err)
+		} else if status >= 500 && upstream.Kind != upstreamServiceKind {
+			t.Fatalf("HTTP %d became a callback fault: %v", status, err)
+		}
+	}
+}
+
+func TestLegacyCallbackTerminationRequiresExactBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		message, kind string
+		status        int
+	}{
+		{"context canceled", requestCanceledKind, 499},
+		{"host read: context canceled", requestCanceledKind, 499},
+		{"context deadline exceeded", requestDeadlineKind, 504},
+		{"host read: context deadline exceeded", requestDeadlineKind, 504},
+		{"provider says context canceled during validation", upstreamCallbackKind, 502},
+		{"context deadline exceeded; invalid API key", upstreamCallbackKind, 502},
+		{"context canceled by provider", upstreamCallbackKind, 502},
+		{"HTTP/2 INTERNAL_ERROR", upstreamCallbackKind, 502},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			fault := hostHTTPFault(errors.New(tc.message), nil, "upstream stream interrupted")
+			upstream, ok := fault.(*upstreamError)
+			if !ok || upstream.Kind != tc.kind || upstream.Status != tc.status || !upstream.IsRequestScoped() {
+				t.Fatalf("legacy callback = %#v", fault)
+			}
+		})
+	}
+	for _, status := range []int{401, 402, 403, 429, 502} {
+		fault := hostHTTPFault(errorPolicyStatusError{message: "context canceled", status: status}, nil, "upstream stream interrupted")
+		if statusOf(fault) != status {
+			t.Fatalf("typed HTTP %d lost precedence: %v", status, fault)
+		}
+		if upstream, ok := fault.(*upstreamError); ok && upstream.IsRequestScoped() {
+			t.Fatalf("typed HTTP %d acquired callback exemption: %v", status, fault)
 		}
 	}
 }

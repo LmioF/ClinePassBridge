@@ -179,12 +179,12 @@ func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*
 	case <-timer.C:
 		return out, requestTimedOut("Cline upstream request timed out")
 	case <-s.stopCh:
-		return out, fail(503, "ClinePassBridge is shutting down")
+		return out, bridgeUnavailable("ClinePassBridge is shutting down")
 	}
 	out.deadline = deadline
 	out.callbackID = callbackID
 	if out.StreamID == "" {
-		return out, fail(502, "host returned no upstream stream")
+		return out, upstreamProtocolFailure("host returned no upstream stream")
 	}
 	s.mu.Lock()
 	stopped := s.stopped
@@ -194,7 +194,7 @@ func (s *Service) openUpstream(payload any, deadline time.Time, diagnostics ...*
 	s.mu.Unlock()
 	if stopped {
 		s.closeUpstream(out.StreamID)
-		return out, fail(503, "ClinePassBridge is shutting down")
+		return out, bridgeUnavailable("ClinePassBridge is shutting down")
 	}
 	return out, nil
 }
@@ -232,13 +232,18 @@ func (s *Service) readWatched(up upstreamStream, fn func([]byte) error, watchdog
 		} else {
 			e = s.call("host.http.stream_read", map[string]any{"stream_id": up.StreamID, "host_callback_id": up.callbackID, "error_details_supported": true}, &chunk)
 		}
+		if d := watchdog.streamDiagnostics(); d != nil && len(chunk.Payload) > 0 {
+			at := time.Now().UTC()
+			d.LastUpstreamByteAt = &at
+			d.UpstreamReadCount++
+		}
 		if failure := watchdog.failure(); failure != nil {
 			return failure
 		}
 		total += len(chunk.Payload)
 		up.diagnostics.capture(chunk.Payload)
 		if total > cfg.MaxResponseBytes {
-			return fail(502, "upstream response exceeds configured limit")
+			return responseLimitFailure("upstream response exceeds configured limit")
 		}
 		if len(chunk.Payload) > 0 {
 			if callbackErr := fn(chunk.Payload); callbackErr != nil {
@@ -375,18 +380,24 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 		if e != nil {
 			return nil, e
 		}
-		return nil, fail(502, "Cline returned non-SSE content for a streaming request")
+		return nil, upstreamProtocolFailure("Cline returned non-SSE content for a streaming request")
 	}
 	cp := newCompletion()
 	if len(expectedChoices) > 0 && expectedChoices[0] > 0 {
 		cp.expectedChoices = expectedChoices[0]
 	}
-	decoder := SSEDecoder{max: s.config().MaxResponseBytes}
+	cfg := s.config()
+	decoder := SSEDecoder{max: cfg.MaxResponseBytes}
 	var idleTimeout time.Duration
-	if cfg := s.config(); cfg.StreamIdleCutoffEnabled {
+	if cfg.StreamIdleCutoffEnabled {
 		idleTimeout = time.Duration(cfg.StreamIdleTimeoutSeconds) * time.Second
 	}
 	watchdog := s.newStreamReadWatchdog(us, idleTimeout)
+	entry.StreamDiagnostics = nil
+	if cfg.Debug {
+		entry.StreamDiagnostics = &StreamDiagnostics{IdleTimeoutSeconds: idleTimeout.Seconds()}
+	}
+	watchdog.diagnostics = entry.StreamDiagnostics
 	e := s.readWatched(us, func(b []byte) error {
 		return decoder.Feed(b, func(payload []byte, event string) error {
 			text := strings.TrimSpace(string(payload))
@@ -394,9 +405,12 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 				return nil
 			}
 			if text == "[DONE]" {
+				if d := watchdog.streamDiagnostics(); d != nil {
+					d.observeFrame("done")
+				}
 				cp.done = true
 				if !cp.allFinished() {
-					return fail(502, "upstream stream ended without finish_reason")
+					return upstreamProtocolFailure("upstream stream ended without finish_reason")
 				}
 				entry.StreamEnd = "done"
 				// CPA owns the downstream SSE envelope and terminal marker.
@@ -404,14 +418,20 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			}
 			j, err := decodeObject(payload)
 			if err != nil {
-				return err
+				return upstreamProtocolFailure("upstream returned invalid JSON")
 			}
 			if j["error"] != nil || event == "error" || j["success"] == false {
+				if d := watchdog.streamDiagnostics(); d != nil {
+					d.observeFrame("error")
+				}
 				err := classifyUpstreamError(us.StatusCode, us.Headers, j, time.Now())
 				return s.classifyEgressError(us, j, payload, err)
 			}
 			observeMetadata(j, entry, attempt)
 			cp.observe(j)
+			if d := watchdog.streamDiagnostics(); d != nil {
+				d.observeFrame(streamFrameKind(j))
+			}
 			if contentStarted(j) {
 				if err := watchdog.effectiveOutput(); err != nil {
 					return err
@@ -425,11 +445,20 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			}
 			if emit != nil {
 				j["model"] = model
-				return emit(jsonBytes(j))
+				return watchdog.emit(func() error { return emit(jsonBytes(j)) })
 			}
 			return nil
 		})
 	}, watchdog)
+	if d := watchdog.streamDiagnostics(); d != nil {
+		watchdog.mu.Lock()
+		if !watchdog.lastOutput.IsZero() {
+			d.IdleWaitMS = max(0, time.Since(watchdog.lastOutput).Milliseconds())
+		}
+		watchdog.mu.Unlock()
+	} else {
+		entry.StreamDiagnostics = nil
+	}
 	var upstream *upstreamError
 	if errors.As(e, &upstream) && upstream.Kind == upstreamStreamIdleTimeoutKind {
 		entry.StreamEnd = "idle_timeout"
@@ -526,7 +555,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 				err = fail(500, "ClinePassBridge stream processing failed")
 			}
 			if !started && err == nil {
-				err = fail(502, "upstream stream ended before any completion frame")
+				err = upstreamProtocolFailure("upstream stream ended before any completion frame")
 			}
 			_ = s.observeQuotaError(c, err)
 			attempt.Status = statusOf(err)
@@ -550,7 +579,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 				if !startsCompletion(frame) {
 					pendingBytes += len(b)
 					if pendingBytes > 64<<10 {
-						return fail(502, "upstream stream prelude exceeds 64 KiB")
+						return responseLimitFailure("upstream stream prelude exceeds 64 KiB")
 					}
 					pending = append(pending, b)
 					return nil
