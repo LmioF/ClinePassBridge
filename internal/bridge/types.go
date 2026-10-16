@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.4"
+const Version = "0.3.5"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
