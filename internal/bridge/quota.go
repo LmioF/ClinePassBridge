@@ -30,14 +30,17 @@ type QuotaBlockLimit struct {
 // QuotaBlock is independent from Credential.Disabled, which always retains the
 // operator's choice. Expiry permits another usage check; it does not enable auth.
 type QuotaBlock struct {
-	AccountHash string            `json:"account_hash,omitempty"`
-	KeyHash     string            `json:"key_hash"`
-	Source      string            `json:"source"`
-	Reason      string            `json:"reason"`
-	RetryAt     *time.Time        `json:"retry_at,omitempty"`
-	BlockedAt   time.Time         `json:"blocked_at"`
-	ObservedAt  time.Time         `json:"observed_at"`
-	Limits      []QuotaBlockLimit `json:"limits"`
+	AccountHash string `json:"account_hash,omitempty"`
+	KeyHash     string `json:"key_hash"`
+	// CPA persists effective Auth.Disabled back into the top-level disabled field.
+	// Keep the operator's choice separately for the duration of the quota block.
+	ManualDisabled *bool             `json:"manual_disabled,omitempty"`
+	Source         string            `json:"source"`
+	Reason         string            `json:"reason"`
+	RetryAt        *time.Time        `json:"retry_at,omitempty"`
+	BlockedAt      time.Time         `json:"blocked_at"`
+	ObservedAt     time.Time         `json:"observed_at"`
+	Limits         []QuotaBlockLimit `json:"limits"`
 }
 
 func quotaKeyHash(c Credential) string { return estimateHash("quota-key", c.APIKey) }
@@ -49,6 +52,11 @@ func normalizeQuotaCredential(c Credential) Credential {
 	}
 	if c.QuotaBlock != nil && (key == "" || c.QuotaBlock.KeyHash != key || len(c.QuotaBlock.Limits) == 0) {
 		c.QuotaBlock = nil
+	}
+	if c.QuotaBlock != nil {
+		block, manualDisabled := *c.QuotaBlock, c.Disabled
+		block.ManualDisabled = &manualDisabled
+		c.QuotaBlock = &block
 	}
 	return c
 }
@@ -80,7 +88,7 @@ func (s *Service) quotaStatus(credentialID string) map[string]any {
 	var block map[string]any
 	if c.QuotaBlock != nil {
 		_ = json.Unmarshal(jsonBytes(c.QuotaBlock), &block)
-		for _, field := range []string{"key_hash", "account_hash", "reason", "retry_at"} {
+		for _, field := range []string{"key_hash", "account_hash", "manual_disabled", "reason", "retry_at"} {
 			delete(block, field)
 		}
 	}
@@ -108,8 +116,8 @@ func (s *Service) quotaPersistenceError(next Credential, err error) {
 	}
 }
 
-// Only the quota-owned fields change. In particular, the stored "disabled" is
-// never the effective runtime flag. Let the watcher reparse the physical file:
+// Preserve the manual choice alongside quota state and restore disabled from it
+// when recovering from CPA's effective runtime flag. Let the watcher reparse the file:
 // host.auth.save would also create a generic registration for rotated auths.
 func (s *Service) persistQuotaCredential(next Credential) (err error) {
 	s.authFileMu.Lock()
@@ -120,6 +128,8 @@ func (s *Service) persistQuotaCredential(next Credential) (err error) {
 		s.mu.Unlock()
 		return fail(409, "quota credential changed before persistence")
 	}
+	next.Disabled = current.Disabled
+	next = normalizeQuotaCredential(next)
 	next.QuotaRevision = id()
 	current.QuotaRevision = next.QuotaRevision
 	if next.QuotaBlock != nil {
@@ -142,6 +152,7 @@ func (s *Service) persistQuotaCredential(next Credential) (err error) {
 	if next.QuotaIdentity != nil {
 		file.updated["quota_identity"] = jsonBytes(next.QuotaIdentity)
 	}
+	file.updated["disabled"] = jsonBytes(current.Disabled)
 	file.updated["quota_revision"] = jsonBytes(next.QuotaRevision)
 	// Preserve an external edit rather than replacing its fields with a stale copy.
 	latest, err := os.ReadFile(file.path)
@@ -223,6 +234,8 @@ func mergeQuotaBlocks(c Credential, blocks ...*QuotaBlock) *QuotaBlock {
 		return nil
 	}
 	result.KeyHash = quotaKeyHash(c)
+	manualDisabled := c.Disabled
+	result.ManualDisabled = &manualDisabled
 	result.Reason = "quota_exhausted"
 	result.RetryAt = nil
 	if c.QuotaIdentity != nil {

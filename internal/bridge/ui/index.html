@@ -63,14 +63,15 @@
     h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
     h2 { margin: 0; font-size: 16px; line-height: 1.3; }
     p { margin: 0; }
-    .button { min-height: 38px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-weight: 600; transition: border-color .16s, background .16s; white-space: nowrap; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-weight: 600; transition: border-color .16s, background .16s; white-space: nowrap; }
+    .button-icon { width: 15px; height: 15px; flex: none; }
     .button:hover:not(:disabled) { border-color: var(--accent); background: var(--code-bg); }
     .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
     .button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
     .button.danger { background: #c65746; border-color: #c65746; color: #fff; }
     .button.danger:hover:not(:disabled) { background: #ae4738; border-color: #ae4738; }
     .button.compact { min-height: 32px; padding: 4px 9px; font-size: 12px; }
-    .button.reassign { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 14px; background: var(--ink); border-color: var(--ink); color: var(--surface); }
+    .button.reassign { gap: 8px; height: 38px; min-height: 38px; padding: 7px 14px; background: var(--ink); border-color: var(--ink); color: var(--surface); }
     .button.reassign:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 85%, var(--surface)); border-color: var(--ink); }
     .button.reassign svg { width: 17px; height: 17px; flex: none; }
     .button.icon { width: 38px; padding: 0; display: grid; place-items: center; font-size: 19px; line-height: 1; }
@@ -81,7 +82,6 @@
     .badge.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
     .badge.bad { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
     .statistics-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 2px 0 12px; }
-    .statistics-scope { color: var(--muted); font-size: 12px; }
     .statistics-segments { display: flex; max-width: 100%; overflow-x: auto; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset-bg); }
     .statistics-segment { flex: none; min-height: 32px; padding: 5px 11px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; white-space: nowrap; transition: background .16s, color .16s; }
     .statistics-segment:hover { background: var(--surface-2); color: var(--ink); }
@@ -112,6 +112,7 @@
     dialog.dialog-wide li { margin: 4px 0; }
     .tabs { display: flex; gap: 8px; margin: 6px 0 24px; padding: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, var(--bg)); }
     .tab { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 0; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted); padding: 11px 16px; font-weight: 600; transition: background .16s, color .16s; }
+    .tab:focus-visible { outline-offset: -4px; }
     .tab svg { width: 16px; height: 16px; flex: none; }
     .tab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 3%, var(--bg)); }
     .tab[aria-selected="true"] { color: var(--ink); }
@@ -225,6 +226,9 @@
     .credentials-panel .panel-head { flex-wrap: wrap; }
     .credential-row { display: grid; grid-template-columns: minmax(180px, .9fr) minmax(0, 2fr); gap: 10px 24px; border-radius: 9px; padding: 14px 18px 12px; min-width: 0; background: var(--inset-bg); }
     .credential-main { align-self: start; }
+    .credential-priority { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+    .credential-quota-recovery { color: var(--warn); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .credential-quota-recovery .badge { color: inherit; }
     .credential-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .credential-title .primary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .credential-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
@@ -507,9 +511,9 @@
 
     <section id="egressPanel" role="tabpanel" aria-labelledby="egressTab" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>代理池</h2><div class="row-actions"><button class="button compact" id="openEgressGuide" type="button" aria-haspopup="dialog" aria-controls="egressGuideDialog">使用指南</button><button class="button compact" id="refreshEgress" type="button">刷新状态</button><button class="button compact primary" id="openEgress" type="button">添加出口</button></div></div>
+        <div class="panel-head"><h2>代理池</h2><div class="row-actions"><button class="button compact" id="openEgressGuide" type="button" aria-haspopup="dialog" aria-controls="egressGuideDialog" data-icon="book">使用指南</button><button class="button compact" id="refreshEgress" type="button" data-icon="refresh">刷新状态</button><button class="button compact primary" id="openEgress" type="button" data-icon="plus">添加出口</button></div></div>
         <p class="egress-experimental"><span class="badge warn">实验性功能</span><span>建议先用少量请求测试，确认稳定后再用于日常流量。</span></p>
-        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后立即返回本地 429。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button">保存策略</button></div>
+        <div class="schedule-tools" id="egressControls"><label title="关闭时沿用原来的 CPA 全局或凭据代理。启用后账号独立代理优先，其余请求使用池内出口。"><input id="egressEnabled" type="checkbox">启用出口池</label><label for="egressWait" title="出口预算耗尽时的最长排队时间；超出后立即返回本地 429。">排队上限 <input class="control" id="egressWait" type="number" value="5" min="0" max="60" step="1"> 秒</label><button class="button compact" id="saveEgress" type="button" data-icon="save">保存策略</button></div>
         <div id="egressList"><div class="empty">正在读取出口…</div></div>
         <p class="inline-state" id="egressState" role="status"></p>
       </div>
@@ -520,13 +524,12 @@
         <input class="control search" id="search" type="search" placeholder="搜索模型、渠道或错误" aria-label="搜索请求日志">
         <select class="control" id="statusFilter" aria-label="按状态筛选"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
         <input class="control provider-filter" id="providerFilter" placeholder="实际渠道" aria-label="按实际渠道筛选" autocomplete="off">
-        <button class="button compact" id="refreshLogs" type="button">刷新日志</button>
+        <button class="button compact" id="refreshLogs" type="button" title="刷新日志和统计" data-icon="refresh">刷新</button>
         <span class="count" id="logCount">-- 条</span>
       </div>
       <form class="statistics-tools" id="statisticsForm">
-        <span class="statistics-scope" id="statisticsScope" tabindex="0" title="独立永久累计，按请求完成时间以分钟查询；不受日志搜索、渠道、状态或保留条数影响。旧日志仅在首次启用时导入当时仍保留的部分。">统计时段</span>
         <input id="statisticsRange" type="hidden" value="all">
-        <div class="statistics-segments" id="statisticsSegments" role="group" aria-labelledby="statisticsScope">
+        <div class="statistics-segments" id="statisticsSegments" role="group" aria-label="选择统计时段" title="独立永久累计，按请求完成时间以分钟查询；不受日志搜索、渠道、状态或保留条数影响。旧日志仅在首次启用时导入当时仍保留的部分。">
           <button class="statistics-segment" type="button" data-range="all" aria-pressed="true">全部</button>
           <button class="statistics-segment" type="button" data-range="today" aria-pressed="false">今天</button>
           <button class="statistics-segment" type="button" data-range="24h" aria-pressed="false">24 小时</button>
@@ -537,9 +540,8 @@
         <div class="statistics-custom" id="statisticsCustom" hidden>
           <label for="statisticsStart">从 <input class="control" id="statisticsStart" type="datetime-local" step="60"></label>
           <label for="statisticsEnd">至 <input class="control" id="statisticsEnd" type="datetime-local" step="60"></label>
-          <button class="button compact" type="submit">应用</button>
+          <button class="button compact" type="submit" data-icon="check">应用</button>
         </div>
-        <button class="button compact" id="refreshStatistics" type="button">刷新统计</button>
         <span class="statistics-alert" id="statisticsError" role="status" hidden></span>
         <span class="badge warn" id="statisticsPersistenceError" tabindex="0" hidden>保存异常</span>
       </form>
@@ -552,11 +554,11 @@
       </div>
       <div class="log-head" aria-hidden="true"><span>时间</span><span>客户端模型 / 上游</span><span>思考强度</span><span>结果</span><span>凭据</span><span>实际上游</span><span>首字 / 耗时</span><span>用量</span><span></span></div>
       <div class="log-list" id="logList" aria-live="polite"><div class="empty">正在读取日志…</div></div>
-      <div class="pagination"><button class="button compact" id="prevPage" type="button">上一页</button><span id="pageInfo">第 1 页</span><button class="button compact" id="nextPage" type="button">下一页</button></div>
+      <div class="pagination"><button class="button compact" id="prevPage" type="button" data-icon="prev">上一页</button><span id="pageInfo">第 1 页</span><button class="button compact" id="nextPage" type="button" data-icon="next">下一页</button></div>
     </section>
 
     <section id="pinPanel" role="tabpanel" aria-labelledby="pinTab" hidden>
-      <div class="notice with-action" role="note"><span>⚠️ 能否钉住上游是玄学问题，开发者于 10.3 测试表明：不同账号有的能钉上游，有的不能。而且风控策略会随时间变化。同时，目前只验证了 deepseek-v4.1-flash 模型可以钉上游。</span><button class="button compact" id="openPinEvidence" type="button">详细证据</button></div>
+      <div class="notice with-action" role="note"><span>⚠️ 能否钉住上游是玄学问题，开发者于 10.3 测试表明：不同账号有的能钉上游，有的不能。而且风控策略会随时间变化。同时，目前只验证了 deepseek-v4.1-flash 模型可以钉上游。</span><button class="button compact" id="openPinEvidence" type="button" data-icon="book">详细证据</button></div>
       <div class="panel">
         <div class="panel-head"><div><h2>钉上游</h2><p class="panel-hint">为每个模型设置上游白名单，并选择插件配置与客户端参数的优先级。</p></div></div>
         <ul class="subtext pin-semantics" id="pinSemantics">
@@ -566,22 +568,21 @@
         </ul>
         <form class="form-stack" id="providerPolicyForm">
           <div class="field"><label for="providerPolicy">上游 provider 策略</label><select class="control" id="providerPolicy" aria-describedby="providerPolicyHint"><option value="config" selected>1 · 插件配置优先</option><option value="client">2 · 客户端优先</option></select><div class="subtext" id="providerPolicyHint">默认插件配置优先：忽略客户端的 providerOptions.gateway 与顶层 provider，不因此报错。客户端优先：客户端字段优先，配置列表只补齐客户端未提供的键。</div></div>
-          <div class="form-foot"><button class="button primary" id="saveProviderPolicy" type="submit">保存策略</button></div>
+          <div class="form-foot"><button class="button primary" id="saveProviderPolicy" type="submit" data-icon="save">保存策略</button></div>
         </form>
         <p class="inline-state" id="providerPolicyState" role="status"></p>
       </div>
       <div class="panel">
         <div class="panel-head"><div><h2>模型上游白名单</h2><p class="panel-hint">使用逗号或空格分隔，也可点击探测到的渠道追加；留空恢复自动路由。可选上游需逐模型探测，结果取决于所用凭据；被分流到私有池的凭据不会返回候选。</p></div></div>
         <div class="field-line">
-          <div class="field"><label for="pinProbeCredential">探测凭据</label><select class="control" id="pinProbeCredential" aria-describedby="pinProbeHint"><option value="">请先添加并启用凭据</option></select></div>
-          <div class="field"><label for="pinTestReasoning">测试思考强度</label><select class="control" id="pinTestReasoning" title="仅影响模型测试；使用已保存的思考强度映射，不经过 CPA 的 payload 规则。"><option value="">未指定</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></div>
-          <button class="button compact" id="probeAllModels" type="button" disabled>探测全部模型</button>
+          <div class="field"><label for="pinProbeCredential">探测凭据</label><select class="control" id="pinProbeCredential" aria-describedby="pinProbeHint"><option value="">暂无可用额度的凭据</option></select></div>
+          <button class="button compact" id="probeAllModels" type="button" disabled data-icon="search">探测全部模型</button>
         </div>
         <p class="subtext" id="pinProbeHint">批量探测按顺序使用开始时选中的凭据；结果仅保留在当前页面，不会自动修改白名单。</p>
         <p class="inline-state" id="pinProbeState" role="status" aria-live="polite"></p>
         <form class="form-stack" id="pinModelsForm">
           <div id="pinModelList"><div class="empty">正在读取模型…</div></div>
-          <div class="form-foot"><button class="button primary" id="savePinModels" type="submit" disabled>保存上游白名单</button></div>
+          <div class="form-foot"><button class="button primary" id="savePinModels" type="submit" disabled data-icon="save">保存上游白名单</button></div>
         </form>
         <p class="inline-state" id="pinModelsState" role="status"></p>
       </div>
@@ -589,33 +590,32 @@
 
     <section id="credentialsPanel" role="tabpanel" aria-labelledby="credentialsTab" hidden>
       <div class="panel credentials-panel">
-        <div class="panel-head"><div><h2 title="按优先级从高到低排序；额度耗尽自动暂停，复查确认恢复后重新调度。人工停用独立保留。">凭据管理</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p></div><div class="row-actions"><button class="button compact" id="openErrorRules" type="button">错误规则</button><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div></div>
+        <div class="panel-head"><div><h2 title="正常凭据按优先级从高到低排序；额度耗尽自动暂停的凭据置后，按预计恢复时间从早到晚排序。额度复查确认恢复后重新调度，人工停用独立保留。">凭据管理</h2><p class="panel-hint">Cline 账号整体已用比例 · 同一账号的多个 Key 共享套餐</p></div><div class="row-actions"><button class="button compact" id="openErrorRules" type="button" data-icon="gear">错误规则</button><button class="button compact primary" id="openCredential" type="button" data-icon="plus">添加凭据</button></div></div>
         <div class="toolbar credential-tools">
           <input class="control search" id="credentialSearch" type="search" placeholder="搜索凭据名称或 ID" aria-label="搜索凭据">
-          <button class="button compact" id="refreshUsage" type="button">刷新本页用量</button>
-          <button class="button reassign" id="openClearAffinity" type="button" aria-haspopup="dialog" aria-controls="clearAffinityDialog" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg><span>重新分配会话</span></button>
+          <button class="button reassign" id="openClearAffinity" type="button" aria-haspopup="dialog" aria-controls="clearAffinityDialog" data-icon="refresh" disabled>重新分配会话</button>
           <span class="count" id="credentialCount"></span>
         </div>
         <div id="credentialList"><div class="empty">正在读取凭据…</div></div>
-        <div class="credential-footer"><div class="pagination" id="credentialPagination" hidden><button class="button compact" id="credentialPrev" type="button">上一页</button><span id="credentialPageInfo"></span><button class="button compact" id="credentialNext" type="button">下一页</button></div></div>
+        <div class="credential-footer"><div class="pagination" id="credentialPagination" hidden><button class="button compact" id="credentialPrev" type="button" data-icon="prev">上一页</button><span id="credentialPageInfo"></span><button class="button compact" id="credentialNext" type="button" data-icon="next">下一页</button></div></div>
         <p class="inline-state" id="credentialState" role="status"></p>
       </div>
     </section>
     <section id="modelsPanel" role="tabpanel" aria-labelledby="modelsTab" hidden>
       <div class="config-grid">
         <div class="panel">
-          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><div class="row-actions"><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
-          <div class="model-test-tools"><label for="modelTestCredential">测试凭据</label><select class="control" id="modelTestCredential"><option value="">请先添加并启用凭据</option></select><label for="modelTestReasoning" title="此测试直接调用上游，不经过 CPA 的 payload 规则。所选值作为映射前的输入；启用插件思考强度映射后，以映射后的值发送。">测试思考强度</label><select class="control" id="modelTestReasoning" title="仅影响模型测试的输入；未指定时也会应用已保存的「未设置」映射，不代表关闭思考。"><option value="">未指定</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select><p class="panel-hint">发送一条简短消息 · 结果仅代表所选账号 · 完整响应耗时：&lt;3 秒绿 / 3–10 秒黄 / ≥10 秒红</p></div>
+          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><div class="row-actions"><button class="button compact primary" id="openModel" type="button" data-icon="plus">添加模型</button></div></div>
+          <div class="model-test-tools"><label for="modelTestCredential">测试凭据</label><select class="control" id="modelTestCredential"><option value="">暂无可用额度的凭据</option></select><label for="modelTestReasoning" title="此测试直接调用上游，不经过 CPA 的 payload 规则。所选值作为映射前的输入；启用插件思考强度映射后，以映射后的值发送。">测试思考强度</label><select class="control" id="modelTestReasoning" title="仅影响模型测试的输入；未指定时也会应用已保存的「未设置」映射，不代表关闭思考。"><option value="">未指定</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select><p class="panel-hint">发送一条简短消息 · 结果仅代表所选账号 · 完整响应耗时：&lt;3 秒绿 / 3–10 秒黄 / ≥10 秒红</p></div>
           <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
           <p class="inline-state" id="modelState"></p>
         </div>
         <div class="panel">
-          <div class="panel-head"><div><h2>思考强度映射</h2><p class="panel-hint" title="按所选模型配置顶层 reasoning_effort，正式请求与管理页测试共用。未添加规则的强度直接透传。已有 thinking / reasoning 配置且未传 reasoning_effort 时，保留原策略。">请求传入 → 发往上游</p></div><a class="button compact" href="https://api-docs.deepseek.com/zh-cn/guides/thinking_mode" target="_blank" rel="noopener noreferrer">默认表依据 ↗</a></div>
+          <div class="panel-head"><div><h2>思考强度映射</h2><p class="panel-hint" title="按所选模型配置顶层 reasoning_effort，正式请求与管理页测试共用。未添加规则的强度直接透传。已有 thinking / reasoning 配置且未传 reasoning_effort 时，保留原策略。">请求传入 → 发往上游</p></div><a class="button compact" href="https://api-docs.deepseek.com/zh-cn/guides/thinking_mode" target="_blank" rel="noopener noreferrer" data-icon="external">默认表依据</a></div>
           <form class="form-stack" id="reasoningMappingForm">
             <div class="field"><label for="reasoningMappingModel">模型</label><select class="control" id="reasoningMappingModel"><option value="">暂无模型</option></select></div>
             <label class="effort-switch"><input id="reasoningMappingEnabled" type="checkbox">启用此模型的映射</label>
             <table class="effort-table"><thead><tr><th scope="col">请求传入</th><th scope="col" title="选择「未设置」会移除 reasoning_effort 字段；模型默认强度由上游决定。">映射为</th><th scope="col">操作</th></tr></thead><tbody id="reasoningMappingRows"></tbody></table>
-            <div class="form-foot"><button class="button compact" id="addReasoningRule" type="button">添加规则</button><button class="button compact" id="resetReasoningMapping" type="button" title="DeepSeek 恢复默认表，其他模型恢复空表；保存后生效，保留当前开关。">恢复默认表</button><button class="button primary" id="saveReasoningMapping" type="submit">保存映射</button></div>
+            <div class="form-foot"><button class="button compact" id="addReasoningRule" type="button" data-icon="plus">添加规则</button><button class="button compact" id="resetReasoningMapping" type="button" title="DeepSeek 恢复默认表，其他模型恢复空表；保存后生效，保留当前开关。" data-icon="undo">恢复默认表</button><button class="button primary" id="saveReasoningMapping" type="submit" data-icon="save">保存映射</button></div>
           </form>
           <p class="inline-state" id="reasoningMappingState" role="status"></p>
         </div>
@@ -626,14 +626,14 @@
         <div class="panel">
           <div class="panel-head request-settings-head">
             <div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div>
-            <button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog">清空统计</button>
+            <button class="button compact" id="openResetStatistics" type="button" aria-haspopup="dialog" aria-controls="resetStatisticsDialog" data-icon="trash">清空统计</button>
           </div>
           <form class="form-stack" id="settingsForm">
             <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
             <div class="field"><label for="timeoutSeconds">请求总时长上限（秒）</label><input class="control" id="timeoutSeconds" type="number" min="10" max="1800" step="1" required><div class="panel-hint">包含思考与输出，新装默认 600 秒。旧设置若为 180 秒，长任务可调至 600 秒或更高。</div></div>
             <div class="field"><label for="logRetention">日志保留条数</label><input class="control" id="logRetention" type="number" min="50" max="10000" step="1" required></div>
             <div class="field"><label class="retry-compat-switch" for="debugEnabled" title="默认关闭。开启后记录并显示流式时序、输出类型和下游发送耗时；关闭后停止记录并隐藏历史诊断，普通请求日志保留。保存后生效。"><span>Debug 诊断</span><input id="debugEnabled" type="checkbox" role="switch"></label></div>
-            <div class="form-foot"><button class="button primary" id="saveSettings" type="submit">保存设置</button></div>
+            <div class="form-foot"><button class="button primary" id="saveSettings" type="submit" data-icon="save">保存设置</button></div>
           </form>
           <p class="inline-state" id="settingsState"></p>
         </div>
@@ -647,7 +647,7 @@
               <div class="field">
                 <label class="retry-compat-switch" for="clientRetryCompatibility"><span>启用重试兼容</span><input id="clientRetryCompatibility" type="checkbox" role="switch" checked></label>
               </div>
-              <div class="form-foot"><button class="button primary" id="saveRetryCompatibility" type="submit">保存设置</button></div>
+              <div class="form-foot"><button class="button primary" id="saveRetryCompatibility" type="submit" data-icon="save">保存设置</button></div>
             </form>
             <p class="inline-state" id="retryCompatibilityState" role="status"></p>
           </div>
@@ -661,21 +661,21 @@
                 <label class="retry-compat-switch" for="streamIdleCutoffEnabled"><span>启用提前截流</span><input id="streamIdleCutoffEnabled" type="checkbox" role="switch"></label>
               </div>
               <div class="field"><label for="streamIdleTimeoutSeconds">无新输出等待时间（秒）</label><input class="control" id="streamIdleTimeoutSeconds" type="number" min="1" max="1800" step="1" value="20" required></div>
-              <div class="form-foot"><button class="button primary" id="saveStreamIdle" type="submit">保存设置</button></div>
+              <div class="form-foot"><button class="button primary" id="saveStreamIdle" type="submit" data-icon="save">保存设置</button></div>
             </form>
             <p class="inline-state" id="streamIdleState" role="status"></p>
           </div>
         </div>
         <div class="panel auth-panel">
           <div class="panel-head"><div><h2>管理鉴权（兜底）</h2><p class="panel-hint">用于读取日志和修改插件配置。优先复用同源 CPA / CPAMP 保存的登录；鉴权失败时可输入当前管理入口的密钥。</p></div></div>
-          <div class="field-line"><span class="version" id="version">版本 --</span><button class="button compact" id="authButton" type="button">管理密钥</button></div>
+          <div class="field-line"><span class="version" id="version">版本 --</span><button class="button compact" id="authButton" type="button" data-icon="key">管理密钥</button></div>
         </div>
       </div>
     </section>
   </main>
 
   <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
-    <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus>关闭</button></div>
+    <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus data-icon="close">关闭</button></div>
     <p>简化上游服务、协议与连接故障的错误文案，避免客户端被嵌套状态码误导，便于识别为可重试的服务端错误。</p>
     <p>默认开启。关闭后尽量保留原始报错；上游 5xx、断流、网络失败和本地截流仍保留免冷却兼容。鉴权、限流和额度保护继续生效。完整诊断留在请求日志，已有冷却继续保留。</p>
     <p>CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
@@ -683,7 +683,7 @@
   </dialog>
 
   <dialog id="streamIdleDialog" aria-labelledby="streamIdleTitle">
-    <div class="panel-head"><h2 id="streamIdleTitle">流式卡住时提前截流</h2><button class="button compact" id="closeStreamIdleHelp" type="button" autofocus>关闭</button></div>
+    <div class="panel-head"><h2 id="streamIdleTitle">流式卡住时提前截流</h2><button class="button compact" id="closeStreamIdleHelp" type="button" autofocus data-icon="close">关闭</button></div>
     <p>收到首段有效输出后，如果连续达到设定时间没有新输出，就主动截断当前流并报告服务端错误，让客户端尽快进入自己的重试流程。</p>
     <p>思考内容、正文和工具调用的有效增量都会重新计时；心跳和空帧不算新输出。等待首段输出时仍使用请求总时长上限。</p>
     <p>默认关闭。开启后默认等待 20 秒，可设为 1–1800 秒。适用于所有上游流式回复，正常回复中的长暂停也会触发。关闭时仍保留请求总时长上限，升级保留已保存的开关和秒数。</p>
@@ -691,7 +691,7 @@
   </dialog>
 
   <dialog id="egressGuideDialog" aria-labelledby="egressGuideTitle">
-    <div class="egress-guide-head"><h2 id="egressGuideTitle">代理池使用指南</h2><button class="button compact" id="closeEgressGuide" type="button" autofocus>关闭</button></div>
+    <div class="egress-guide-head"><h2 id="egressGuideTitle">代理池使用指南</h2><button class="button compact" id="closeEgressGuide" type="button" autofocus data-icon="close">关闭</button></div>
     <div class="egress-guide-body">
       <h3>第一次用，从一条代理开始</h3>
       <ol>
@@ -727,7 +727,7 @@
       <div class="field-line"><div class="field"><label for="egressRPM">每 60 秒请求数</label><input class="control" id="egressRPM" type="number" min="1" max="100000" value="60" required></div><div class="field"><label for="egressInflight">最大在飞请求</label><input class="control" id="egressInflight" type="number" min="1" max="1024" value="4" required></div></div>
       <label class="schedule-tools"><input type="checkbox" id="egressEndpointEnabled" checked>启用此出口</label>
       <p class="inline-state" id="egressDialogState" role="status"></p>
-      <div class="form-foot"><button class="button" type="button" id="cancelEgress">取消</button><button class="button primary" type="submit" id="submitEgress">保存出口</button></div>
+      <div class="form-foot"><button class="button" type="button" id="cancelEgress" data-icon="close">取消</button><button class="button primary" type="submit" id="submitEgress" data-icon="save">保存出口</button></div>
     </form>
   </dialog>
   <dialog id="authDialog" aria-labelledby="authTitle">
@@ -738,35 +738,35 @@
       <div class="field"><label for="authKey">管理密钥</label><input class="control" id="authKey" type="password" autocomplete="new-password" placeholder="当前入口的 CPA 或 CPAMP 管理密钥"></div>
       <label class="field-line"><input id="rememberAuth" type="checkbox">在此浏览器记住管理密钥</label>
       <p class="inline-state" id="authState" role="alert" hidden></p>
-      <div class="dialog-actions"><button class="button danger" id="clearAuth" type="button">清除密钥</button><button class="button" id="closeAuth" type="button">取消</button><button class="button primary" id="authSubmit" type="submit">验证并应用</button></div>
+      <div class="dialog-actions"><button class="button danger" id="clearAuth" type="button" data-icon="trash">清除密钥</button><button class="button" id="closeAuth" type="button" data-icon="close">取消</button><button class="button primary" id="authSubmit" type="submit" data-icon="check">验证并应用</button></div>
     </form>
   </dialog>
   <dialog id="modelDialog" aria-labelledby="modelFormTitle">
     <h2 id="modelFormTitle">添加模型映射</h2>
-    <button class="button fetch-models" id="refreshModels" type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg><span>获取上游模型</span></button>
+    <button class="button fetch-models" id="refreshModels" type="button" data-icon="refresh">获取上游模型</button>
     <form class="form-stack" id="modelForm" autocomplete="off">
       <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4.1-flash" autocomplete="off"></div>
       <div class="field"><label for="upstreamId">Cline Pass 上游模型</label><input class="control mono" id="upstreamId" required placeholder="例如 cline-pass/deepseek-v4.1-flash" autocomplete="off"></div>
       <p class="inline-state" id="modelDialogState" role="alert"></p>
-      <div class="dialog-actions"><button class="button" id="cancelModelEdit" type="button">取消</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
+      <div class="dialog-actions"><button class="button" id="cancelModelEdit" type="button" data-icon="close">取消</button><button class="button primary" id="saveModel" type="submit" data-icon="plus">添加模型</button></div>
     </form>
   </dialog>
   <dialog class="candidate-dialog" id="modelCandidateDialog" aria-labelledby="modelCandidateTitle">
     <h2 id="modelCandidateTitle">选择上游模型</h2>
     <p>勾选以添加，取消已有勾选以删除。仅同步名称与上游 ID 均匹配默认值的映射，自定义映射保持原样。</p>
-    <div class="candidate-tools"><input class="control" id="candidateSearch" type="search" placeholder="搜索模型" aria-label="搜索候选模型"><button class="button compact" id="selectCandidates" type="button">全选当前结果</button><button class="button compact" id="clearCandidates" type="button">清空当前勾选</button></div>
+    <div class="candidate-tools"><input class="control" id="candidateSearch" type="search" placeholder="搜索模型" aria-label="搜索候选模型"><button class="button compact" id="selectCandidates" type="button" data-icon="select">全选当前结果</button><button class="button compact" id="clearCandidates" type="button" data-icon="clear">清空当前勾选</button></div>
     <div class="candidate-list" id="candidateList" aria-live="polite"></div>
     <p class="inline-state" id="candidateState" role="status"></p>
-    <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled>应用更改</button></div>
+    <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button" data-icon="close">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled data-icon="check">应用更改</button></div>
   </dialog>
   <dialog id="errorRulesDialog" aria-labelledby="errorRulesTitle">
-    <div class="panel-head"><h2 id="errorRulesTitle" title="按顺序采用首条匹配的规则；同一状态码下，任意条件命中即可。">错误规则</h2><div class="row-actions"><span class="badge">全部 ClinePassBridge 凭据</span><button class="button compact" id="openErrorRuleHelp" type="button" aria-haspopup="dialog">动作说明</button></div></div>
+    <div class="panel-head"><h2 id="errorRulesTitle" title="按顺序采用首条匹配的规则；同一状态码下，任意条件命中即可。">错误规则</h2><div class="row-actions"><span class="badge">全部 ClinePassBridge 凭据</span><button class="button compact" id="openErrorRuleHelp" type="button" aria-haspopup="dialog" data-icon="info">动作说明</button></div></div>
     <form id="errorRulesForm">
       <div id="errorRulesList"></div>
-      <div class="error-rules-tools"><button class="button compact" id="addErrorRule" type="button">＋ 新增规则</button><button class="button compact" id="resetErrorRules" type="button" title="恢复为默认五条规则，保存后应用到全部账号">恢复默认规则</button></div>
+      <div class="error-rules-tools"><button class="button compact" id="addErrorRule" type="button" data-icon="plus">新增规则</button><button class="button compact" id="resetErrorRules" type="button" title="恢复为默认五条规则，保存后应用到全部账号" data-icon="undo">恢复默认规则</button></div>
       <p class="inline-state" id="errorRulesState" role="status" aria-live="polite"></p>
       <div id="errorRulesFailures" class="notice error" role="alert" hidden></div>
-      <div class="dialog-actions"><button class="button" id="retryErrorRules" type="button" hidden>重试同步</button><button class="button" id="closeErrorRules" type="button">关闭</button><button class="button primary" id="saveErrorRules" type="submit">保存并同步所有账号</button></div>
+      <div class="dialog-actions"><button class="button" id="retryErrorRules" type="button" hidden data-icon="refresh">重试同步</button><button class="button" id="closeErrorRules" type="button" data-icon="close">关闭</button><button class="button primary" id="saveErrorRules" type="submit" data-icon="save">保存并同步所有账号</button></div>
     </form>
   </dialog>
   <dialog class="dialog-wide" id="errorRuleHelpDialog" aria-labelledby="errorRuleHelpTitle">
@@ -778,7 +778,7 @@
       <section><h3>继续并冷却</h3><p><b>当前请求：</b>将失败对象冷却，再尝试其他可用候选。</p><p><b>后续调度：</b>冷却期间跳过失败对象。</p></section>
     </div>
     <p class="error-action-note">停止不等于永久禁用；继续仍受可用账号和重试限制影响。冷却时长由错误类型、上游 Retry-After 和 CPA 配置决定，不是延迟响应。插件自身的额度暂停与限流保护仍会生效。</p>
-    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus>知道了</button></form>
+    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus data-icon="check">知道了</button></form>
   </dialog>
   <dialog id="credentialDialog" aria-labelledby="credentialDialogTitle">
     <h2 id="credentialDialogTitle">添加凭据</h2>
@@ -792,7 +792,7 @@
         <div class="subtext" id="credentialPriorityHint">数字越大越优先被调度；留空表示不设置，按 CPA 自身顺序。多个账号时，优先级高的会先被使用。</div>
       </div>
       <p class="inline-state" id="credentialDialogState" role="alert"></p>
-      <div class="dialog-actions"><button class="button" id="cancelCredential" type="button">取消</button><button class="button primary" id="saveCredential" type="submit">添加凭据</button></div>
+      <div class="dialog-actions"><button class="button" id="cancelCredential" type="button" data-icon="close">取消</button><button class="button primary" id="saveCredential" type="submit" data-icon="plus">添加凭据</button></div>
     </form>
   </dialog>
   <dialog id="clearAffinityDialog" aria-labelledby="clearAffinityTitle" aria-describedby="clearAffinityDialogHint">
@@ -804,7 +804,7 @@
       <p class="subtext">无需停用账号，也不用在操作期间发送消息。优先级相同时沿用 CPA 的调度策略；高优先级账号不可用时仍会选择其他账号。</p>
       <p class="inline-state" id="clearAffinityProgress" role="status" aria-live="polite"></p>
       <p class="inline-state error-text" id="clearAffinityError" role="alert"></p>
-      <div class="dialog-actions"><button class="button" id="cancelClearAffinity" type="button">取消</button><button class="button primary" id="confirmClearAffinity" type="submit">清除旧绑定，重新分配</button></div>
+      <div class="dialog-actions"><button class="button" id="cancelClearAffinity" type="button" data-icon="close">取消</button><button class="button primary" id="confirmClearAffinity" type="submit" data-icon="refresh">清除旧绑定，重新分配</button></div>
     </form>
   </dialog>
   <dialog id="resetStatisticsDialog" aria-labelledby="resetStatisticsTitle" aria-describedby="resetStatisticsHint">
@@ -813,14 +813,14 @@
     <p>请求日志、凭据和套餐额度保持不变。界面中不可恢复；服务端会保留重置前的备份。</p>
     <form id="resetStatisticsForm">
       <p class="inline-state error-text" id="resetStatisticsError" role="alert"></p>
-      <div class="dialog-actions"><button class="button" id="cancelResetStatistics" type="button" autofocus>取消</button><button class="button danger" id="confirmResetStatistics" type="submit">确认清空统计</button></div>
+      <div class="dialog-actions"><button class="button" id="cancelResetStatistics" type="button" autofocus data-icon="close">取消</button><button class="button danger" id="confirmResetStatistics" type="submit" data-icon="trash">确认清空统计</button></div>
     </form>
   </dialog>
   <dialog id="estimateDialog" aria-labelledby="estimateDialogTitle" aria-describedby="estimateDialogAccount">
     <h2 id="estimateDialogTitle">采样依据与计价说明</h2>
     <p id="estimateDialogAccount"></p>
     <div class="estimate-detail" id="estimateDialogContent"></div>
-    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus>关闭</button></form>
+    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus data-icon="close">关闭</button></form>
   </dialog>
   <dialog class="dialog-wide" id="pinEvidenceDialog" aria-labelledby="pinEvidenceTitle">
     <h2 id="pinEvidenceTitle">钉上游：详细证据</h2>
@@ -841,7 +841,7 @@
       <li>10/3 02:45 — 模型差异：glm-5.3 在 1号 和 2 号下均被忽略；kimi-k3 / glm-5.3-flash 无候选</li>
       <li>10/3 02:55 — 2 号钉 wafer / alibaba / fireworks / runware / novita 全部精确命中</li>
     </ol>
-    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus>关闭</button></form>
+    <form method="dialog" class="dialog-actions"><button class="button primary" autofocus data-icon="close">关闭</button></form>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>
 
@@ -851,12 +851,44 @@
     const API_BASE = document.querySelector('meta[name="cpa-api-base"]').content;
     const PAGE_SIZE = 50;
     const $ = (id) => document.getElementById(id);
-    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, modelBusy: false, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, candidateSnapshot: [], fetchingModels: false, editingCredentialId: '', credentialBusy: false, providerProbes: new Map(), providerProbePending: new Map(), providerProbeBatch: false };
+    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, logsLoading: false, providers: new Set(), models: [], editingModelIndex: -1, modelBusy: false, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, candidateSnapshot: [], fetchingModels: false, editingCredentialId: '', credentialBusy: false, providerProbes: new Map(), providerProbePending: new Map(), providerProbeBatch: false };
     const modelTestResults = new Map();
     let reasoningMappingBusy = false;
     let reasoningMappingRevision = 0;
     const reasoningDrafts = new Map();
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    const buttonIcons = {
+      gear: '<path d="m9.2 3-.6 2.3-2 .9-2.1-.7-2 3.5 1.6 1.6v2.8L2.5 15l2 3.5 2.1-.7 2 .9.6 2.3h4l.6-2.3 2-.9 2.1.7 2-3.5-1.6-1.6v-2.8l1.6-1.6-2-3.5-2.1.7-2-.9-.6-2.3Z"/><circle cx="11.2" cy="12" r="3"/>',
+      refresh: '<path d="M20 5v5h-5M4 19v-5h5"/><path d="M5 12a7 7 0 0 1 11.95-4.95L20 10M19 12a7 7 0 0 1-11.95 4.95L4 14"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      edit: '<path d="m16 3 5 5-13 13H3v-5ZM14 5l5 5"/>',
+      trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+      test: '<path d="m8 4 12 8-12 8Z"/>',
+      search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+      book: '<path d="M12 5v16M3 3h4a5 5 0 0 1 5 2 5 5 0 0 1 5-2h4v16h-4a5 5 0 0 0-5 2 5 5 0 0 0-5-2H3Z"/>',
+      key: '<circle cx="8" cy="15" r="5"/><path d="m11.5 11.5 9-9M16 7l3 3M19 4l3 3"/>',
+      save: '<path d="M5 3h12l4 4v14H3V3ZM7 3v6h10V3M7 21v-8h10v8"/>',
+      close: '<path d="m6 6 12 12M6 18 18 6"/>',
+      check: '<path d="m5 12 4 4L19 6"/>',
+      select: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>',
+      clear: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8"/>',
+      undo: '<path d="M4 4v6h6M4 10a8 8 0 1 1 0 6"/>',
+      prev: '<path d="m15 5-7 7 7 7"/>',
+      next: '<path d="m9 5 7 7-7 7"/>',
+      up: '<path d="m5 12 7-7 7 7M12 5v14"/>',
+      down: '<path d="m5 12 7 7 7-7M12 5v14"/>',
+      external: '<path d="M14 3h7v7M10 14 21 3M10 3H3v18h18v-7"/>',
+      info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
+    };
+    function buttonIcon(name) {
+      return `<svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${buttonIcons[name] || buttonIcons.info}</svg>`;
+    }
+    function setButtonLabel(button, label, icon) {
+      if (typeof button === 'string') button = $(button);
+      if (icon) button.dataset.icon = icon;
+      button.innerHTML = `${button.dataset.icon ? buttonIcon(button.dataset.icon) : ''}<span>${esc(label)}</span>`;
+    }
+    for (const button of document.querySelectorAll('.button[data-icon]')) setButtonLabel(button, button.textContent.trim());
     const present = (value) => value !== null && value !== undefined && String(value).trim() !== '';
     const shown = (value, fallback = '未记录') => present(value) ? esc(value) : fallback;
     const number = (value) => Number.isFinite(Number(value)) && present(value) ? Number(value).toLocaleString('zh-CN') : '--';
@@ -1051,7 +1083,7 @@
       $('authState').textContent = message;
       $('authState').hidden = !message;
       $('authSubmit').disabled = busy || Date.now() < authGate.bannedUntil;
-      $('authSubmit').textContent = busy ? '正在验证…' : '验证并应用';
+      setButtonLabel('authSubmit', busy ? '正在验证…' : '验证并应用');
       $('authKey').placeholder = authGate.retrySaved ? '留空以重新验证保留的密钥，或输入新密钥' : '当前入口的 CPA 或 CPAMP 管理密钥';
       for (const id of ['authKey', 'authType', 'authTypeTrigger', 'rememberAuth']) $(id).disabled = busy;
       if (authGate.timer && Date.now() >= authGate.bannedUntil) { clearInterval(authGate.timer); authGate.timer = null; }
@@ -1067,7 +1099,7 @@
       resetAuthGate();
       authGate.paused = error;
       authGate.retrySaved = retrySaved;
-      $('authButton').textContent = '管理密钥';
+      setButtonLabel('authButton', '管理密钥');
       renderAuthState();
       if (!$('authDialog').open) $('authDialog').showModal();
     }
@@ -1131,7 +1163,7 @@
         if (revision !== authGate.revision || authGate.paused) throw authGate.paused || new Error('登录状态已变化，请重新验证');
         authGate.verified = auth;
         if (manualKey) window.PassBridgeSaveAuth?.(manualKey, manualAuthType, rememberAuth);
-        $('authButton').textContent = manualKey ? '密钥已验证' : '已复用管理密钥';
+        setButtonLabel('authButton', manualKey ? '密钥已验证' : '已复用管理密钥');
         return { auth, status };
       }).finally(() => { authGate.flight = null; renderAuthState(); });
       renderAuthState();
@@ -1258,9 +1290,9 @@
     function renderProviderOptions() {
       dropdowns.get('providerFilter').sync();
     }
-    const statistics = { controller: null, revision: 0, resetting: false };
+    const statistics = { controller: null, revision: 0, loading: false, resetting: false };
     const STATISTICS_STORAGE_KEY = 'clinepassbridge.statistics-range.v1';
-    const STATISTICS_SCOPE_HINT = $('statisticsScope').title;
+    const STATISTICS_SCOPE_HINT = $('statisticsSegments').title;
     const STATISTICS_RATE_HINT = $('statTokenRateCard').title;
     function localMinute(date) {
       return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -1318,7 +1350,7 @@
       for (const id of ['statRequests', 'statTotalTokens', 'statPromptTokens', 'statCompletionTokens', 'statCachedTokens', 'statTokenRate', 'statCacheRate']) $(id).textContent = '—';
       $('statRequestsCard').removeAttribute('title');
       $('statisticsPersistenceError').hidden = true;
-      $('statisticsScope').title = STATISTICS_SCOPE_HINT;
+      $('statisticsSegments').title = STATISTICS_SCOPE_HINT;
       $('rateHistoryPartial').hidden = true;
       $('statTokenRateCard').title = STATISTICS_RATE_HINT;
     }
@@ -1330,7 +1362,7 @@
       $('statCacheRate').textContent = present(data.cache_rate) ? percent(data.cache_rate) : '—';
       $('statRequestsCard').title = `本地退避 ${number(data.local_backoff_requests)} 次 · 上游请求 ${number(data.upstream_requests)} 次${data.upstream_requests_unknown > 0 ? ` · 另有 ${number(data.upstream_requests_unknown)} 条旧记录未记录上游调用次数` : ''}`;
       const time = (value) => { const date = new Date(value); return present(value) && Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '—'; };
-      $('statisticsScope').title = `${STATISTICS_SCOPE_HINT}${data.since ? ` 累计起点：${time(data.since)}。` : ''}${data.start || data.end ? ` 查询时段：${time(data.start)} 至 ${time(data.end)}。` : ''}${data.imported_history ? ' 已导入首次启用时保留的部分旧日志，不代表完整历史。' : ''}`;
+      $('statisticsSegments').title = `${STATISTICS_SCOPE_HINT}${data.since ? ` 累计起点：${time(data.since)}。` : ''}${data.start || data.end ? ` 查询时段：${time(data.start)} 至 ${time(data.end)}。` : ''}${data.imported_history ? ' 已导入首次启用时保留的部分旧日志，不代表完整历史。' : ''}`;
       const persistenceError = present(data.persistence_error) ? String(data.persistence_error) : '';
       $('statisticsPersistenceError').hidden = !persistenceError;
       $('statisticsPersistenceError').title = persistenceError ? `统计持久化失败：${persistenceError}；最新累计可能仅保留在内存中。` : '';
@@ -1343,7 +1375,8 @@
       statistics.controller = controller;
       const revision = ++statistics.revision;
       $('statisticsError').hidden = true;
-      $('refreshStatistics').disabled = true;
+      statistics.loading = true;
+      syncLogsRefreshButton();
       $('statisticsCards').setAttribute('aria-busy', 'true');
       clearStatisticsCards();
       try {
@@ -1362,7 +1395,8 @@
         return false;
       } finally {
         if (revision === statistics.revision) {
-          $('refreshStatistics').disabled = false;
+          statistics.loading = false;
+          syncLogsRefreshButton();
           $('statisticsCards').setAttribute('aria-busy', 'false');
         }
       }
@@ -1371,7 +1405,8 @@
       state.logsController?.abort();
       const controller = new AbortController();
       state.logsController = controller;
-      $('refreshLogs').disabled = true;
+      state.logsLoading = true;
+      syncLogsRefreshButton();
       $('logList').innerHTML = '<div class="empty">正在读取日志…</div>';
       try {
         const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value }, signal: controller.signal });
@@ -1392,7 +1427,20 @@
         if (error.name === 'AbortError' || controller !== state.logsController) return;
         $('logList').innerHTML = `<div class="empty"><strong>日志读取失败</strong>${esc(error.message)}</div>`;
         globalError(error.message);
-      } finally { if (controller === state.logsController) $('refreshLogs').disabled = false; }
+      } finally {
+        if (controller === state.logsController) {
+          state.logsLoading = false;
+          syncLogsRefreshButton();
+        }
+      }
+    }
+    function syncLogsRefreshButton() {
+      const busy = state.logsLoading || statistics.loading || statistics.resetting;
+      $('refreshLogs').disabled = busy;
+      $('refreshLogs').setAttribute('aria-busy', String(busy));
+    }
+    async function refreshLogsView() {
+      await Promise.all([loadStatus().catch((error) => globalError(error.message)), loadLogs(), loadStatistics()]);
     }
     async function loadStatus() {
       const data = await api('/status');
@@ -1405,7 +1453,7 @@
       state.editingModelIndex = -1;
       $('modelForm').reset();
       $('modelFormTitle').textContent = '添加模型映射';
-      $('saveModel').textContent = '添加模型';
+      setButtonLabel('saveModel', '添加模型', 'plus');
       $('modelDialogState').textContent = '';
       $('refreshModels').hidden = false;
     }
@@ -1442,19 +1490,19 @@
       const credential = $('modelTestCredential').value;
       $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => {
         const test = modelTestResults.get(modelTestKey(model));
-        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div>${modelTestHTML(test)}</div>`;
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${buttonIcon('test')}${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">${buttonIcon('edit')}编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">${buttonIcon('trash')}删除</button></div>${modelTestHTML(test)}</div>`;
       }).join('') : '<div class="empty">暂无模型映射</div>';
       syncPinModelTests();
     }
     function syncPinModelTests() {
       const credential = $('pinProbeCredential').value;
-      const reasoning = $('pinTestReasoning').value;
+      const reasoning = '';
       for (const button of $('pinModelList').querySelectorAll('.pin-test-model')) {
         const model = state.models[Number(button.dataset.index)];
         if (!model) continue;
         const test = modelTestResults.get(modelTestKey(model, credential, reasoning));
         button.disabled = !credential || test?.pending || reasoningMappingBusy || state.modelBusy;
-        button.textContent = test?.pending ? '测试中…' : '测试模型';
+        setButtonLabel(button, test?.pending ? '测试中…' : '测试模型', 'test');
         button.setAttribute('aria-busy', String(!!test?.pending));
         $(`pinModelTest-${button.dataset.index}`).innerHTML = modelTestHTML(test);
       }
@@ -1465,7 +1513,7 @@
       if (state.providerProbePending.has(model.id)) return '<div class="subtext">正在探测可钉上游…</div>';
       if (!probe) return '<div class="subtext">尚未探测，点击「探测可钉上游」获取该模型可固定的上游</div>';
       const providers = Array.isArray(probe.providers) ? probe.providers : [];
-      const chips = providers.map((provider) => `<button class="button compact provider-chip" type="button" data-provider="${esc(provider)}" ${state.modelBusy ? 'disabled' : ''}>${esc(provider)}</button>`).join('');
+      const chips = providers.map((provider) => `<button class="button compact provider-chip" type="button" data-provider="${esc(provider)}" ${state.modelBusy ? 'disabled' : ''}>${buttonIcon('plus')}${esc(provider)}</button>`).join('');
       const error = String(probe.error || '');
       const summary = error.split(/\r?\n/).find((line) => line.trim()) || '探测失败';
       return `${chips ? `<div class="provider-chips">${chips}</div>` : ''}<div class="subtext">${esc(probe.note)}${probe.served_by ? ` · 本次由 ${esc(probe.served_by)} 服务` : ''}${probe.credential_label || probe.credential_id ? ` · 凭据 ${esc(probe.credential_label || probe.credential_id)}` : ''}</div>${probe.ok === false ? '<span class="badge bad">探测失败</span>' : ''}${error ? `<details class="model-test-error"><summary><span>${esc(summary)}</span><span>完整错误</span></summary><pre>${esc(error)}</pre></details>` : ''}`;
@@ -1476,7 +1524,7 @@
       for (const button of $('pinModelList').querySelectorAll('.probe-providers')) {
         const pending = state.providerProbePending.has(button.dataset.model);
         button.disabled = pending || state.providerProbeBatch || !credential;
-        button.textContent = pending ? '探测中…' : '探测可钉上游';
+        setButtonLabel(button, pending ? '探测中…' : '探测可钉上游', 'search');
         button.setAttribute('aria-busy', String(pending));
       }
     }
@@ -1487,7 +1535,7 @@
       syncProviderProbeControls();
     }
     function renderPinModelRows() {
-      $('pinModelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge ${model.providers.length ? 'good' : ''}">${model.providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据和已保存的上游白名单发送一条简短消息">测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">上游 provider 允许列表</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" value="${esc(model.providers.join(', '))}" autocomplete="off" aria-describedby="pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`).join('') : '<div class="empty"><strong>暂无模型映射</strong>请前往模型映射标签添加模型。</div>';
+      $('pinModelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge ${model.providers.length ? 'good' : ''}">${model.providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">${buttonIcon('search')}探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据和已保存的上游白名单发送一条简短消息">${buttonIcon('test')}测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">上游 provider 允许列表</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" value="${esc(model.providers.join(', '))}" autocomplete="off" aria-describedby="pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`).join('') : '<div class="empty"><strong>暂无模型映射</strong>请前往模型映射标签添加模型。</div>';
       $('savePinModels').disabled = !state.models.length || state.modelBusy;
       syncProviderProbeControls();
       syncPinModelTests();
@@ -1521,7 +1569,7 @@
       let completed = 0, failed = 0;
       try {
         for (const model of models) {
-          $('probeAllModels').textContent = `正在探测 ${completed + 1}/${models.length}…`;
+          setButtonLabel('probeAllModels', `正在探测 ${completed + 1}/${models.length}…`);
           $('pinProbeState').textContent = `正在探测 ${completed + 1}/${models.length}：${model.id}`;
           await probeModelProviders(model, credentialID);
           completed++;
@@ -1531,12 +1579,11 @@
       } catch (error) { $('pinProbeState').textContent = `探测中断 ${completed}/${models.length}：${error.message}`; }
       finally {
         state.providerProbeBatch = false;
-        $('probeAllModels').textContent = '探测全部模型';
+        setButtonLabel('probeAllModels', '探测全部模型');
         syncProviderProbeControls();
       }
     });
     $('pinProbeCredential').addEventListener('change', () => { syncProviderProbeControls(); syncPinModelTests(); });
-    $('pinTestReasoning').addEventListener('change', syncPinModelTests);
     $('pinModelList').addEventListener('click', (event) => {
       const test = event.target.closest('.pin-test-model');
       if (test) {
@@ -1549,7 +1596,7 @@
           $(`pinProviders-${index}`).focus();
           return;
         }
-        testMappedModel(model, $('pinProbeCredential').value, $('pinTestReasoning').value);
+        testMappedModel(model, $('pinProbeCredential').value, '');
         return;
       }
       const probe = event.target.closest('.probe-providers');
@@ -1589,12 +1636,12 @@
       }
     });
     function syncModelTestCredentials() {
-      const enabled = credentialView.items.filter((item) => item.enabled !== false);
+      const available = credentialView.items.filter((item) => !credentialQuotaPaused(item));
       for (const id of ['modelTestCredential', 'pinProbeCredential']) {
         const field = $(id);
         const selected = field.value;
-        field.replaceChildren(...(enabled.length ? enabled.map((item) => new Option(`${item.label || item.id} · ${item.id}`, item.id)) : [new Option('请先添加并启用凭据', '')]));
-        if (enabled.some((item) => item.id === selected)) field.value = selected;
+        field.replaceChildren(...(available.length ? available.map((item) => new Option(`${item.label || item.id} · ${item.id}${item.enabled === false ? ' · 人工停用' : ''}`, item.id)) : [new Option('暂无可用额度的凭据', '')]));
+        if (available.some((item) => item.id === selected)) field.value = selected;
         dropdowns.get(id).sync();
       }
       renderModelRows();
@@ -1630,7 +1677,7 @@
     function updateCandidateCount() {
       const { additions, removed } = candidateChanges();
       const changed = additions.length + removed.size;
-      $('confirmCandidates').textContent = changed ? `应用更改（+${additions.length} / −${removed.size}）` : '应用更改';
+      setButtonLabel('confirmCandidates', changed ? `应用更改（+${additions.length} / −${removed.size}）` : '应用更改');
       $('confirmCandidates').disabled = !changed || state.candidateBusy;
     }
     function visibleCandidates() {
@@ -1689,7 +1736,7 @@
       $('openClearAffinity').setAttribute('aria-busy', String(clearAffinity.busy));
       $('clearAffinityOrder').innerHTML = enabled.length ? enabled.map((item) => `<div><strong>${esc(item.label || item.id)}</strong> · 优先级 ${esc(item.priority || 0)}</div>`).join('') : '当前没有启用的账号';
       $('confirmClearAffinity').disabled = clearAffinity.busy || !credentialView.items.length;
-      $('confirmClearAffinity').textContent = clearAffinity.busy ? '正在重新分配…' : '清除旧绑定，重新分配';
+      setButtonLabel('confirmClearAffinity', clearAffinity.busy ? '正在重新分配…' : '清除旧绑定，重新分配');
       $('cancelClearAffinity').disabled = clearAffinity.busy;
       $('clearAffinityForm').setAttribute('aria-busy', String(clearAffinity.busy));
     }
@@ -1832,7 +1879,7 @@
       row.querySelector('.credential-plan').innerHTML = usagePlanHTML(id);
       const button = row.querySelector('.refresh-usage');
       button.disabled = credentialView.pending.has(id) || credentialView.queue.has(id);
-      button.textContent = credentialView.pending.has(id) || credentialView.queue.has(id) ? '更新中…' : '刷新';
+      setButtonLabel(button, credentialView.pending.has(id) || credentialView.queue.has(id) ? '更新中…' : '刷新', 'refresh');
     }
     function renderCredentials(data, focusID = '') {
       if (data) {
@@ -1847,18 +1894,19 @@
         syncModelTestCredentials();
         syncClearAffinityControls();
       }
+      const ordered = credentialView.items.slice().sort(compareCredentialDisplayOrder);
       if (focusID) {
         $('credentialSearch').value = '';
-        credentialView.page = Math.floor(Math.max(0, credentialView.items.findIndex((item) => item.id === focusID)) / CREDENTIAL_PAGE_SIZE);
+        credentialView.page = Math.floor(Math.max(0, ordered.findIndex((item) => item.id === focusID)) / CREDENTIAL_PAGE_SIZE);
       }
       const query = $('credentialSearch').value.trim().toLocaleLowerCase();
-      const filtered = credentialView.items.filter((item) => `${item.label} ${item.id}`.toLocaleLowerCase().includes(query));
+      const filtered = ordered.filter((item) => `${item.label} ${item.id}`.toLocaleLowerCase().includes(query));
       const pages = Math.max(1, Math.ceil(filtered.length / CREDENTIAL_PAGE_SIZE));
       credentialView.page = Math.min(credentialView.page, pages - 1);
       credentialView.visible = filtered.slice(credentialView.page * CREDENTIAL_PAGE_SIZE, (credentialView.page + 1) * CREDENTIAL_PAGE_SIZE);
       const visibleIDs = new Set(credentialView.visible.map((item) => item.id));
       for (const id of credentialView.queue.keys()) if (!visibleIDs.has(id)) credentialView.queue.delete(id);
-      $('credentialList').innerHTML = credentialView.visible.length ? credentialView.visible.map((item) => `<div class="credential-row${credentialQuotaPaused(item) ? ' quota-paused' : ''}" data-id="${esc(item.id)}"><div class="credential-main"><div class="credential-title"><span class="primary-text" title="${esc(item.label)}">${shown(item.label, '未命名')}</span><span class="credential-schedule-badges">${credentialScheduleBadges(item)}</span></div><div class="subtext mono credential-id" title="${esc(item.id)}">${esc(item.id)}</div>${present(item.priority) && Number(item.priority) !== 0 ? `<div class="subtext"><span class="badge">优先级 ${esc(item.priority)}</span></div>` : ''}<div class="credential-schedule-detail">${credentialScheduleDetail(item)}</div><div class="credential-status">${usageStatusHTML(item)}</div></div><div class="credential-usage">${usageHTML(item)}</div><div class="credential-bottom"><div class="credential-plan">${usagePlanHTML(item.id)}</div><div class="row-actions">${credentialToggleHTML(item)}<button class="button compact reset-cooldown" type="button" data-id="${esc(item.id)}" ${item.enabled === false || credentialToggleState(item).disabled ? 'disabled' : ''} title="清除插件与宿主冷却，不改变上游额度">清除冷却</button><button class="button compact refresh-usage" type="button" data-id="${esc(item.id)}" ${credentialView.pending.has(item.id) ? 'disabled' : ''}>刷新</button><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div></div>`).join('') : `<div class="empty">${query ? '没有匹配的凭据' : '尚未添加凭据'}</div>`;
+      $('credentialList').innerHTML = credentialView.visible.length ? credentialView.visible.map((item) => `<div class="credential-row${credentialQuotaPaused(item) ? ' quota-paused' : ''}" data-id="${esc(item.id)}"><div class="credential-main"><div class="credential-title"><span class="primary-text" title="${esc(item.label)}">${shown(item.label, '未命名')}</span><span class="credential-schedule-badges">${credentialScheduleBadges(item)}</span></div><div class="subtext mono credential-id" title="${esc(item.id)}">${esc(item.id)}</div><div class="subtext credential-priority"><span class="badge">优先级 ${esc(item.priority || 0)}</span><span class="credential-quota-recovery">${credentialQuotaRecoveryHTML(item)}</span></div><div class="credential-schedule-detail">${credentialScheduleDetail(item)}</div><div class="credential-status">${usageStatusHTML(item)}</div></div><div class="credential-usage">${usageHTML(item)}</div><div class="credential-bottom"><div class="credential-plan">${usagePlanHTML(item.id)}</div><div class="row-actions">${credentialToggleHTML(item)}<button class="button compact reset-cooldown" type="button" data-id="${esc(item.id)}" ${item.enabled === false || credentialQuotaPaused(item) || credentialToggleState(item).disabled ? 'disabled' : ''} title="清除插件与宿主冷却，不改变上游额度">${buttonIcon('undo')}清除冷却</button><button class="button compact refresh-usage" type="button" data-id="${esc(item.id)}" ${credentialView.pending.has(item.id) ? 'disabled' : ''}>${buttonIcon('refresh')}刷新</button><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">${buttonIcon('edit')}编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">${buttonIcon('trash')}删除</button></div></div></div>`).join('') : `<div class="empty">${query ? '没有匹配的凭据' : '尚未添加凭据'}</div>`;
       $('credentialCount').textContent = query ? `${filtered.length} / ${credentialView.items.length} 个凭据` : `${filtered.length} 个凭据`;
       for (const row of $('credentialList').children) {
         const item = credentialView.visible.find((entry) => entry.id === row.dataset.id);
@@ -1868,7 +1916,6 @@
       $('credentialPageInfo').textContent = `${credentialView.page + 1} / ${pages} 页`;
       $('credentialPrev').disabled = credentialView.page === 0;
       $('credentialNext').disabled = credentialView.page + 1 >= pages;
-      $('refreshUsage').disabled = !credentialView.visible.length;
       refreshVisibleUsage();
     }
     function usageViewVisible() { return !!authGate.verified && !authGate.paused && !document.hidden && !$('credentialsPanel').hidden; }
@@ -1911,7 +1958,6 @@
     $('credentialSearch').addEventListener('input', () => { credentialView.page = 0; renderCredentials(); });
     $('credentialPrev').addEventListener('click', () => { credentialView.page = Math.max(0, credentialView.page - 1); renderCredentials(); });
     $('credentialNext').addEventListener('click', () => { credentialView.page++; renderCredentials(); });
-    $('refreshUsage').addEventListener('click', () => refreshVisibleUsage(true));
     document.addEventListener('visibilitychange', () => { if (usageViewVisible()) refreshVisibleUsage(); else credentialView.queue.clear(); });
     setInterval(() => { if (usageViewVisible()) refreshVisibleUsage(); }, 15000);
     async function loadConfig() {
@@ -1951,7 +1997,7 @@
       if (name !== 'credentials') credentialView.queue.clear();
       if (name === 'egress') loadEgress();
       else if (name !== 'logs') loadConfig();
-      else { loadLogs(); loadStatistics(); }
+      else refreshLogsView();
     }
     $('openPinEvidence').addEventListener('click', () => $('pinEvidenceDialog').showModal());
     $('openRetryCompatibilityHelp').addEventListener('click', () => $('retryCompatibilityDialog').showModal());
@@ -1963,7 +2009,7 @@
     $('configTab').addEventListener('click', () => setTab('config'));
     $('credentialsTab').addEventListener('click', () => setTab('credentials'));
     $('modelsTab').addEventListener('click', () => setTab('models'));
-    $('refreshLogs').addEventListener('click', () => { loadStatus().catch((error) => globalError(error.message)); loadLogs(); loadStatistics(); });
+    $('refreshLogs').addEventListener('click', refreshLogsView);
     $('statisticsRange').addEventListener('change', () => { syncStatisticsRange(); loadStatistics(); });
     $('statisticsSegments').addEventListener('click', (event) => {
       const button = event.target.closest('[data-range]');
@@ -1972,7 +2018,6 @@
       $('statisticsRange').dispatchEvent(new Event('change'));
     });
     $('statisticsForm').addEventListener('submit', (event) => { event.preventDefault(); loadStatistics(); });
-    $('refreshStatistics').addEventListener('click', loadStatistics);
     $('openResetStatistics').addEventListener('click', () => {
       if (statistics.resetting) return;
       $('resetStatisticsError').textContent = '';
@@ -1987,10 +2032,12 @@
       statistics.resetting = true;
       statistics.controller?.abort();
       statistics.revision++;
+      statistics.loading = false;
+      syncLogsRefreshButton();
       $('statisticsCards').setAttribute('aria-busy', 'false');
       $('resetStatisticsError').textContent = '';
-      for (const id of ['openResetStatistics', 'cancelResetStatistics', 'confirmResetStatistics', 'refreshStatistics']) $(id).disabled = true;
-      $('confirmResetStatistics').textContent = '正在清空…';
+      for (const id of ['openResetStatistics', 'cancelResetStatistics', 'confirmResetStatistics']) $(id).disabled = true;
+      setButtonLabel('confirmResetStatistics', '正在清空…');
       $('resetStatisticsForm').setAttribute('aria-busy', 'true');
       let reset = false;
       try {
@@ -2002,8 +2049,9 @@
       } catch (error) { $('resetStatisticsError').textContent = `清空失败：${error.message}`; }
       finally {
         statistics.resetting = false;
-        for (const id of ['openResetStatistics', 'cancelResetStatistics', 'confirmResetStatistics', 'refreshStatistics']) $(id).disabled = false;
-        $('confirmResetStatistics').textContent = '确认清空统计';
+        syncLogsRefreshButton();
+        for (const id of ['openResetStatistics', 'cancelResetStatistics', 'confirmResetStatistics']) $(id).disabled = false;
+        setButtonLabel('confirmResetStatistics', '确认清空统计');
         $('resetStatisticsForm').setAttribute('aria-busy', 'false');
       }
       if (reset && !await loadStatistics()) toast('统计已清空；刷新失败，请在请求日志页重新刷新统计');
@@ -2138,7 +2186,7 @@
         $('modelId').value = model.id ?? '';
         $('upstreamId').value = model.upstream_id ?? '';
         $('modelFormTitle').textContent = '编辑模型映射';
-        $('saveModel').textContent = '保存映射';
+        setButtonLabel('saveModel', '保存映射', 'save');
         $('refreshModels').hidden = true;
       }
       $('modelDialog').showModal();
@@ -2230,7 +2278,7 @@
       body.innerHTML = rows.length ? rows.map(([from, to], index) => {
         const id = ++reasoningRowSequence;
         const select = (side, value, options) => `<select class="control effort-${side}" id="effort-${side}-${id}" aria-label="第 ${index + 1} 条${side === 'from' ? '请求强度' : '映射强度'}">${options.map((option) => `<option value="${option}" ${option === value ? 'selected' : ''}>${reasoningLabel(option)}</option>`).join('')}</select>`;
-        return `<tr data-effort-row><td>${select('from', from, reasoningSources)}</td><td>${select('to', to, reasoningTargets)}</td><td><button class="button compact danger remove-effort-rule" type="button" aria-label="删除第 ${index + 1} 条规则">删除</button></td></tr>`;
+        return `<tr data-effort-row><td>${select('from', from, reasoningSources)}</td><td>${select('to', to, reasoningTargets)}</td><td><button class="button compact danger remove-effort-rule" type="button" aria-label="删除第 ${index + 1} 条规则">${buttonIcon('trash')}删除</button></td></tr>`;
       }).join('') : '<tr><td class="effort-empty" colspan="3">暂无规则，所有强度直接透传</td></tr>';
       for (const field of body.querySelectorAll('select')) dropdowns.set(field.id, createDropdown(field, () => [...field.options].map((option) => ({ value: option.value, label: option.textContent }))));
       syncReasoningControls();
@@ -2373,7 +2421,7 @@
       $('credentialKey').placeholder = id ? '留空保持原有 Key' : '输入新的 API Key';
       $('credentialDialogTitle').textContent = id ? '编辑凭据' : '添加凭据';
       $('credentialDialogHint').textContent = id ? '留空 API Key 仅更新名称和优先级。' : '输入名称和 API Key，可选设置优先级。';
-      $('saveCredential').textContent = id ? '保存凭据' : '添加凭据';
+      setButtonLabel('saveCredential', id ? '保存凭据' : '添加凭据', id ? 'save' : 'plus');
       $('credentialDialogState').textContent = '';
       $('credentialDialog').showModal();
       $('credentialLabel').focus();
@@ -2443,7 +2491,7 @@
     $('rememberAuth').checked = window.PassBridgeRememberAuth?.() || false;
     restoreStatisticsRange();
     if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');
-    else { loadStatus().then(() => loadLogs()).catch((error) => globalError(error.message)); loadStatistics(); }
+    else refreshLogsView();
   </script>
 </body>
 </html>

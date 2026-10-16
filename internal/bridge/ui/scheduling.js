@@ -5,14 +5,53 @@ function schedulingBadge(label, tone = '', title = '') { return `<span class="ba
 const credentialScheduling = { accounts: new Map(), pending: new Set(), loading: false, refreshQueued: false, revision: 0 };
 function credentialSchedule(id) { return credentialScheduling.accounts.get(id); }
 function credentialQuotaPaused(item) { return credentialSchedule(item.id)?.quota_blocked ?? !!item.quota_paused; }
+function credentialQuotaResetAt(item) {
+  const account = credentialSchedule(item.id);
+  // The scheduling aggregate is the latest quota snapshot and already uses the
+  // last exhausted window. Never substitute host/model cooldown deadlines.
+  const scheduledReset = account?.quota_blocked === true ? Date.parse(account.retry_at) : NaN;
+  const resets = (item.quota_block?.limits || []).map(limit => Date.parse(limit.resets_at)).filter(Number.isFinite);
+  return Number.isFinite(scheduledReset) ? scheduledReset : (resets.length ? Math.max(...resets) : NaN);
+}
+function compareCredentialDisplayOrder(a, b) {
+  const aPaused = !!credentialQuotaPaused(a), bPaused = !!credentialQuotaPaused(b);
+  if (aPaused !== bPaused) return aPaused ? 1 : -1;
+  if (!aPaused) return 0;
+  const aReset = credentialQuotaResetAt(a), bReset = credentialQuotaResetAt(b);
+  const aTime = Number.isFinite(aReset) ? aReset : Infinity;
+  const bTime = Number.isFinite(bReset) ? bReset : Infinity;
+  return aTime === bTime ? 0 : aTime < bTime ? -1 : 1;
+}
+function credentialQuotaRecoveryHTML(item, now = Date.now()) {
+  if (!credentialQuotaPaused(item)) return '';
+  const reset = credentialQuotaResetAt(item);
+  let label = '恢复时间待确认';
+  if (Number.isFinite(reset)) {
+    if (reset <= now) label = '等待额度复查';
+    else {
+      const minutes = Math.max(1, Math.ceil((reset - now) / 60000));
+      const hours = Math.floor(minutes / 60);
+      const duration = minutes < 60 ? `${minutes}分钟` : hours < 24 ? `${hours}小时` : `${Math.floor(hours / 24)}天 ${hours % 24}小时`;
+      label = `约 ${duration}后恢复`;
+    }
+  }
+  const title = [Number.isFinite(reset) ? `额度重置时间：${schedulingTime(reset)}` : '', '实际恢复以额度复查结果为准', item.enabled === false ? '额度恢复后仍保留人工停用' : ''].filter(Boolean).join('；');
+  return `<span class="badge" title="${esc(title)}">${esc(label)}</span>`;
+}
+function updateCredentialQuotaRecovery(row, item, now = Date.now()) {
+  const node = row.querySelector('.credential-quota-recovery');
+  if (!node) return;
+  const html = credentialQuotaRecoveryHTML(item, now);
+  if (node.innerHTML !== html) node.innerHTML = html;
+}
 function credentialToggleState(item) {
   const paused = credentialQuotaPaused(item), manualDisabled = item.enabled === false;
   return {
-    checked: !manualDisabled && !paused,
-    disabled: paused || credentialScheduling.pending.has(item.id),
+    checked: !manualDisabled,
+    disabled: credentialScheduling.pending.has(item.id),
     label: manualDisabled ? '已停用' : paused ? '自动暂停' : '启用',
     title: paused
-      ? (manualDisabled ? '已人工停用且额度耗尽；额度恢复后仍保持人工停用' : '额度耗尽已自动暂停；额度恢复后自动参与调度')
+      ? (manualDisabled ? '已人工停用且额度耗尽；可切换为人工启用，切换后仍需等待额度恢复' : '当前为人工启用，额度耗尽已自动暂停；可切换人工状态，额度复查确认恢复后才重新参与调度')
       : '人工启停；额度耗尽时自动暂停'
   };
 }
@@ -69,6 +108,7 @@ function updateCredentialScheduling() {
   for (const row of $('credentialList').children) {
     const item = credentialView.items.find(a => a.id === row.dataset.id); if (!item) continue;
     syncCredentialCollapse(row, item);
+    updateCredentialQuotaRecovery(row, item);
     row.querySelector('.credential-schedule-badges').innerHTML = credentialScheduleBadges(item);
     row.querySelector('.credential-schedule-detail').innerHTML = credentialScheduleDetail(item);
     const toggle = row.querySelector('.credential-enabled');
@@ -78,7 +118,7 @@ function updateCredentialScheduling() {
     toggle.setAttribute('aria-label', `${item.label || item.id} ${state.label}`);
     toggle.closest('.credential-toggle').title = state.title;
     row.querySelector('.credential-toggle-label').textContent = state.label;
-    row.querySelector('.reset-cooldown').disabled = item.enabled === false || state.disabled;
+    row.querySelector('.reset-cooldown').disabled = item.enabled === false || credentialQuotaPaused(item) || state.disabled;
   }
 }
 async function loadCredentialScheduling() {
@@ -90,12 +130,20 @@ async function loadCredentialScheduling() {
   try {
     const data = await api('/scheduling');
     if (revision !== credentialScheduling.revision) return;
+    const previousOrder = credentialView.items.slice().sort(compareCredentialDisplayOrder).map(item => item.id);
+    const previousState = new Map(credentialView.items.map(item => [item.id, { enabled: item.enabled, paused: credentialQuotaPaused(item) }]));
     credentialScheduling.accounts = new Map((data.accounts || []).map(a => [a.id, a]));
     for (const item of credentialView.items) {
       const current = credentialSchedule(item.id);
       if (current && !credentialScheduling.pending.has(item.id)) item.enabled = current.enabled;
     }
     updateCredentialScheduling();
+    const currentOrder = credentialView.items.slice().sort(compareCredentialDisplayOrder).map(item => item.id);
+    if (previousOrder.length !== currentOrder.length || previousOrder.some((id, index) => id !== currentOrder[index])) renderCredentials();
+    if (credentialView.items.some(item => previousState.get(item.id)?.enabled !== item.enabled || previousState.get(item.id)?.paused !== credentialQuotaPaused(item))) {
+      syncModelTestCredentials();
+      syncClearAffinityControls();
+    }
     $('credentialState').textContent = '';
   } catch (error) { $('credentialState').textContent = `调度状态读取失败：${error.message}`; }
   finally {
@@ -106,7 +154,7 @@ async function loadCredentialScheduling() {
 async function changeCredentialScheduling(id, action, enabled) {
   if (credentialScheduling.pending.has(id)) return;
   const item = credentialView.items.find(a => a.id === id);
-  if (!item || credentialQuotaPaused(item)) { updateCredentialScheduling(); return; }
+  if (!item || (action !== 'toggle' && credentialQuotaPaused(item))) { updateCredentialScheduling(); return; }
   credentialScheduling.revision++;
   credentialScheduling.pending.add(id); updateCredentialScheduling();
   try {
@@ -129,7 +177,15 @@ $('credentialList').addEventListener('click', (event) => {
   const button = event.target.closest('.reset-cooldown');
   if (button && !button.disabled) changeCredentialScheduling(button.dataset.id, 'reset');
 });
-setInterval(() => { if (usageViewVisible()) loadCredentialScheduling(); }, 15000);
+setInterval(() => {
+  if (!usageViewVisible()) return;
+  const now = Date.now();
+  for (const row of $('credentialList').children) {
+    const item = credentialView.items.find(item => item.id === row.dataset.id);
+    if (item) updateCredentialQuotaRecovery(row, item, now);
+  }
+  loadCredentialScheduling();
+}, 15000);
 function renderEgress(data) {
   schedulingView.egress = data;
   $('egressEnabled').checked = !!data.enabled;
@@ -137,7 +193,7 @@ function renderEgress(data) {
   $('egressList').innerHTML = (data.endpoints || []).map((item) => {
     const status = item.status || {};
     const badge = !item.enabled ? schedulingBadge('停用') : status.retry_at && new Date(status.retry_at) > new Date() ? schedulingBadge('冷却', 'warn') : schedulingBadge('已配置', 'good');
-    return `<div class="egress-row"><div class="schedule-account-main"><strong>${esc(item.label || item.id)}</strong>${badge}<span class="subtext mono">${esc(item.proxy_url === 'direct' ? '直连' : (item.proxy_url || '代理已保存'))}</span></div><div class="egress-metrics"><span>最近 60 秒 <b>${esc(status.requests_last_minute ?? 0)} / ${esc(item.rpm)}</b></span><span>在飞 <b>${esc(status.inflight ?? 0)} / ${esc(item.max_inflight)}</b></span><span title="相同真实出口 IP 使用同一分组，共享速率和并发预算">出口组 <b>${esc(item.group || item.id)}</b></span>${status.retry_at ? `<span>恢复 ${esc(schedulingTime(status.retry_at))}</span>` : ''}</div><div class="row-actions"><button type="button" class="button compact" data-egress-edit="${esc(item.id)}">编辑</button><button type="button" class="button compact danger" data-egress-delete="${esc(item.id)}">移除</button></div></div>`;
+    return `<div class="egress-row"><div class="schedule-account-main"><strong>${esc(item.label || item.id)}</strong>${badge}<span class="subtext mono">${esc(item.proxy_url === 'direct' ? '直连' : (item.proxy_url || '代理已保存'))}</span></div><div class="egress-metrics"><span>最近 60 秒 <b>${esc(status.requests_last_minute ?? 0)} / ${esc(item.rpm)}</b></span><span>在飞 <b>${esc(status.inflight ?? 0)} / ${esc(item.max_inflight)}</b></span><span title="相同真实出口 IP 使用同一分组，共享速率和并发预算">出口组 <b>${esc(item.group || item.id)}</b></span>${status.retry_at ? `<span>恢复 ${esc(schedulingTime(status.retry_at))}</span>` : ''}</div><div class="row-actions"><button type="button" class="button compact" data-egress-edit="${esc(item.id)}">${buttonIcon('edit')}编辑</button><button type="button" class="button compact danger" data-egress-delete="${esc(item.id)}">${buttonIcon('trash')}移除</button></div></div>`;
   }).join('') || `<div class="empty">${data.enabled ? '出口池已开启，但尚未配置出口' : '尚未配置出口 · 当前沿用 CPA 原有代理设置'}</div>`;
 }
 async function loadEgress() {

@@ -61,7 +61,7 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 		deadline: start.Add(time.Duration(cfg.TimeoutSeconds) * time.Second),
 		Payload:  []byte(`{"messages":[{"role":"user","content":"ok"}],"max_tokens":16}`),
 	}
-	j, credential, upstream, err := s.prepare(req)
+	j, credential, upstream, err := s.prepareProbe(req, in.CredentialID)
 	// The probe asks what this model *can* be pinned to, so it must not carry
 	// the model's own pin: a request pinned to one provider reports no
 	// alternatives, which would make an already-pinned model look unpinnable.
@@ -121,8 +121,21 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	})
 }
 
-// probeCredential resolves the credential to probe with: the requested one, or
-// the enabled credential the scheduler would prefer.
+// prepareProbe bypasses only manual disablement for an explicitly selected
+// management credential. Automatic selection retains normal request admission.
+func (s *Service) prepareProbe(r ExecutorRequest, explicitID string) (map[string]any, Credential, string, error) {
+	if explicitID == "" {
+		return s.prepare(r)
+	}
+	c, err := s.probeCredential(explicitID)
+	if err != nil {
+		return nil, c, "", err
+	}
+	return s.prepareWithCredential(r, c)
+}
+
+// probeCredential resolves an explicitly requested credential even if manually
+// disabled, or automatically picks an enabled credential. Both require quota.
 func (s *Service) probeCredential(id string) (Credential, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -131,8 +144,8 @@ func (s *Service) probeCredential(id string) (Credential, error) {
 		if !ok {
 			return c, fail(404, "credential not found")
 		}
-		if c.APIKey == "" || c.Disabled || normalizeQuotaCredential(c).QuotaBlock != nil {
-			return c, fail(400, "该凭据已停用、额度暂停或缺少 API key")
+		if c.APIKey == "" || normalizeQuotaCredential(c).QuotaBlock != nil {
+			return c, fail(400, "该凭据额度暂停或缺少 API key")
 		}
 		return c, nil
 	}

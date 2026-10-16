@@ -370,7 +370,7 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 		if s.quotaWriteErrors == nil {
 			s.quotaWriteErrors = map[string]string{}
 		}
-		s.quotaWriteErrors[c.ID] = "旧 Key 的额度状态待清理保存"
+		s.quotaWriteErrors[c.ID] = "额度状态待同步保存"
 	}
 	if r.FileName != "" {
 		s.authFiles[c.ID] = filepath.Base(r.FileName)

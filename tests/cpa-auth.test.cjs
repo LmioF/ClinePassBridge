@@ -209,6 +209,7 @@ function pageAPI(options) {
     loadLogs: () => { context.loads.push(context.api('/logs')); },
     loadEgress: () => { context.loads.push(context.api('/egress')); },
     globalError: () => {}, toast: () => {},
+    setButtonLabel: (id, label) => { context.$(id).textContent = label; },
   });
   context.$('egressPanel').hidden = true;
   context.$('logsPanel').hidden = false;

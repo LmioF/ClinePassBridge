@@ -88,20 +88,20 @@ function renderErrorRuleDraft(draft) {
       return `<div class="error-rule-condition" data-condition="${position}">
         <div class="field condition-kind-field"><label for="${conditionID}-kind">匹配类型</label>${errorRuleSelect(`${conditionID}-kind`, condition.type, [['contains', '包含文本'], ['regex', '正则表达式']], `规则 ${index + 1} 条件 ${position + 1} 匹配类型`, 'error-rule-kind')}</div>
         <div class="field"><label for="${conditionID}-text" title="同一规则内任意条件命中即可；正则使用 Go 语法">匹配条件</label><textarea class="control" id="${conditionID}-text" rows="1" maxlength="4096" required aria-label="规则 ${index + 1} 条件 ${position + 1}">${esc(condition.text)}</textarea></div>
-        <button class="button compact danger" type="button" data-rule-command="remove-condition" style="margin-top:22px" aria-label="删除规则 ${index + 1} 条件 ${position + 1}">删除</button>
+        <button class="button compact danger" type="button" data-rule-command="remove-condition" style="margin-top:22px" aria-label="删除规则 ${index + 1} 条件 ${position + 1}">${buttonIcon('trash')}删除</button>
       </div>`;
     }).join('');
     return `<section class="error-rule-card" data-rule="${index}" aria-label="规则 ${index + 1}">
       <div class="error-rule-head"><strong class="error-rule-name">规则 ${index + 1}</strong><div class="row-actions">
-        <button class="button compact icon-button" type="button" data-rule-command="up" data-unavailable="${index === 0}" aria-label="上移规则 ${index + 1}" title="上移">↑</button>
-        <button class="button compact icon-button" type="button" data-rule-command="down" data-unavailable="${index === draft.length - 1}" aria-label="下移规则 ${index + 1}" title="下移">↓</button>
-        <button class="button compact danger" type="button" data-rule-command="remove" aria-label="删除规则 ${index + 1}">删除</button>
+        <button class="button compact icon-button" type="button" data-rule-command="up" data-unavailable="${index === 0}" aria-label="上移规则 ${index + 1}" title="上移">${buttonIcon('up')}</button>
+        <button class="button compact icon-button" type="button" data-rule-command="down" data-unavailable="${index === draft.length - 1}" aria-label="下移规则 ${index + 1}" title="下移">${buttonIcon('down')}</button>
+        <button class="button compact danger" type="button" data-rule-command="remove" aria-label="删除规则 ${index + 1}">${buttonIcon('trash')}删除</button>
       </div></div>
       <p class="error-rule-description"></p>
       <div class="error-rule-fields"><div class="field"><label for="error-status-${id}">状态码</label><input class="control error-rule-status" id="error-status-${id}" type="number" min="100" max="599" step="1" required value="${esc(rule.status)}"></div>
       <div class="field"><label for="error-action-${id}" title="停止：向客户端返回错误；继续：尝试后续候选。并冷却：暂时排除失败的凭据或模型。">动作</label>${errorRuleSelect(`error-action-${id}`, rule.action, errorRuleActions, `规则 ${index + 1} 动作`, 'error-rule-action')}</div></div>
       <div class="error-rule-conditions">${conditionHTML}</div>
-      <button class="button compact error-rule-add" type="button" data-rule-command="add-condition">＋ 新增条件</button>
+      <button class="button compact error-rule-add" type="button" data-rule-command="add-condition">${buttonIcon('plus')}新增条件</button>
     </section>`;
   }).join('') : '<div class="empty">暂无规则。保存后清除所有账号的单凭据规则，交由 CPA 继承规则或默认错误处理。</div>';
   for (const field of list.querySelectorAll('select')) {
@@ -115,7 +115,7 @@ function errorRulesChanged() {
   updateErrorRuleExplanations();
   errorRulesView.dirty = true;
   $('errorRulesState').textContent = '有未保存的修改';
-  $('closeErrorRules').textContent = '放弃修改';
+  setButtonLabel('closeErrorRules', '放弃修改');
   errorRulesControls();
 }
 
@@ -134,7 +134,7 @@ function acceptErrorRuleResponse(data, saved = false) {
   errorRulesView.defaults = data.defaults || errorRulesView.defaults;
   renderErrorRuleDraft(toErrorRuleDraft(data.rules || []));
   showErrorRuleSync(data.sync, saved);
-  $('closeErrorRules').textContent = '关闭';
+  setButtonLabel('closeErrorRules', '关闭');
 }
 
 $('openErrorRules').addEventListener('click', async () => {
@@ -147,7 +147,7 @@ $('openErrorRules').addEventListener('click', async () => {
   $('errorRulesState').textContent = '';
   $('errorRulesFailures').hidden = true;
   $('retryErrorRules').hidden = true;
-  $('closeErrorRules').textContent = '关闭';
+  setButtonLabel('closeErrorRules', '关闭');
   $('errorRulesDialog').showModal();
   try { acceptErrorRuleResponse(await api('/error-rules')); }
   catch (error) { $('errorRulesList').innerHTML = ''; $('errorRulesState').textContent = `读取失败：${error.message}`; }

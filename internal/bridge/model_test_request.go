@@ -98,7 +98,7 @@ func (s *Service) testModel(r ManagementRequest) (any, error) {
 		deadline: start.Add(time.Duration(cfg.TimeoutSeconds) * time.Second),
 		Payload:  jsonBytes(body),
 	}
-	j, credential, upstream, err := s.prepare(req)
+	j, credential, upstream, err := s.prepareProbe(req, in.CredentialID)
 	if err == nil && upstream != in.UpstreamID {
 		err = fail(409, "模型映射已变更，请刷新后重试")
 	}

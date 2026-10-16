@@ -255,14 +255,10 @@ func TestModelProbeTimeoutAndPreflight(t *testing.T) {
 			t.Fatalf("timeout missing: %s", r.Body)
 		}
 	})
-	for _, tc := range []string{"disabled", "removed", "unmapped", "changed", "duplicate"} {
+	for _, tc := range []string{"removed", "unmapped", "changed", "duplicate"} {
 		t.Run(tc, func(t *testing.T) {
 			s := probeService(t)
 			switch tc {
-			case "disabled":
-				c := s.creds["probe-account"]
-				c.Disabled = true
-				s.creds[c.ID] = c
 			case "removed":
 				delete(s.creds, "probe-account")
 			case "unmapped":

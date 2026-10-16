@@ -32,6 +32,10 @@ func (s *Service) prepare(r ExecutorRequest) (map[string]any, Credential, string
 	if e != nil {
 		return nil, c, "", e
 	}
+	return s.prepareWithCredential(r, c)
+}
+
+func (s *Service) prepareWithCredential(r ExecutorRequest, c Credential) (map[string]any, Credential, string, error) {
 	up, e := s.resolveModel(r.Model)
 	if e != nil {
 		return nil, c, "", e

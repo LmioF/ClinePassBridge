@@ -13,6 +13,9 @@ func (c *Credential) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &known); err != nil {
 		return err
 	}
+	if known.QuotaBlock != nil && known.QuotaBlock.ManualDisabled != nil {
+		known.Disabled = *known.QuotaBlock.ManualDisabled
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return err
