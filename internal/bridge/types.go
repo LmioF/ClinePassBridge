@@ -148,7 +148,7 @@ type Config struct {
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: false, StreamIdleTimeoutSeconds: 20, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 16 << 20}
+	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: false, StreamIdleTimeoutSeconds: 20, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 64 << 20}
 }
 
 // Scalar settings support partial updates, but supplied collections replace the

@@ -12,6 +12,45 @@ import (
 	"time"
 )
 
+func TestConfigMaxResponseBytesDefaultsAndPartialUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings string
+		want     int
+	}{
+		{name: "new-install", want: 64 << 20},
+		{name: "missing-field", settings: `{"timeout_seconds":120}`, want: 64 << 20},
+		{name: "saved-16-MiB", settings: `{"timeout_seconds":120,"max_response_bytes":16777216}`, want: 16 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.settings != "" {
+				if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.settings), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := observabilityService(t, dir)
+			want := s.config()
+			if want.MaxResponseBytes != tc.want || want.StreamIdleCutoffEnabled {
+				t.Fatalf("loaded max_response_bytes=%d, idle cutoff=%t; want %d, false", want.MaxResponseBytes, want.StreamIdleCutoffEnabled, tc.want)
+			}
+			if tc.settings != "" && want.TimeoutSeconds != 120 {
+				t.Fatal("loading response limit changed existing timeout")
+			}
+			response := observabilityManagement(t, s, "PUT", "/config", nil, []byte(`{"max_response_bytes":33554432}`), 200)
+			want.MaxResponseBytes = 32 << 20
+			var returned Config
+			if err := json.Unmarshal(response.Body, &returned); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(returned, want) {
+				t.Fatalf("single-field update changed returned config: got=%s want=%s", response.Body, jsonBytes(want))
+			}
+			assertStreamIdleConfigPersisted(t, s, want)
+		})
+	}
+}
+
 func TestConfigFidelityRejectedPUTPreservesStateAndDisk(t *testing.T) {
 	for _, tc := range []struct {
 		name string

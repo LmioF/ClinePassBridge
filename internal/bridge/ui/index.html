@@ -631,6 +631,7 @@
           <form class="form-stack" id="settingsForm">
             <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
             <div class="field"><label for="timeoutSeconds">请求总时长上限（秒）</label><input class="control" id="timeoutSeconds" type="number" min="10" max="1800" step="1" required><div class="panel-hint">包含思考与输出，新装默认 600 秒。旧设置若为 180 秒，长任务可调至 600 秒或更高。</div></div>
+            <div class="field"><label for="maxResponseMiB" title="max_response_bytes：单次上游响应的累计大小，包含思考、正文、工具参数及 SSE 包装。超过后以 413 结束。范围 0.0625–64 MiB，新装默认 64 MiB；升级保留原值。">最大响应大小（MiB） ⓘ</label><input class="control" id="maxResponseMiB" type="number" min="0.0625" max="64" step="any" required title="1 MiB = 1,048,576 字节；支持小数，换算后需为整数个字节。推荐 64 MiB。"></div>
             <div class="field"><label for="logRetention">日志保留条数</label><input class="control" id="logRetention" type="number" min="50" max="10000" step="1" required></div>
             <div class="field"><label class="retry-compat-switch" for="debugEnabled" title="默认关闭。开启后记录并显示流式时序、输出类型和下游发送耗时；关闭后停止记录并隐藏历史诊断，普通请求日志保留。保存后生效。"><span>Debug 诊断</span><input id="debugEnabled" type="checkbox" role="switch"></label></div>
             <div class="form-foot"><button class="button primary" id="saveSettings" type="submit" data-icon="save">保存设置</button></div>
@@ -1972,6 +1973,7 @@
         $('providerPolicy').value = config?.provider_policy === 'client' ? 'client' : 'config';
         dropdowns.get('providerPolicy').sync();
         $('timeoutSeconds').value = present(config?.timeout_seconds) ? config.timeout_seconds : 600;
+        $('maxResponseMiB').value = present(config?.max_response_bytes) ? config.max_response_bytes / 1048576 : 64;
         $('logRetention').value = present(config?.log_retention) ? config.log_retention : 500;
         $('debugEnabled').checked = config?.debug === true;
         renderModels(models);
@@ -2377,11 +2379,16 @@
       event.preventDefault();
       const timeout_seconds = Number($('timeoutSeconds').value);
       const log_retention = Number($('logRetention').value);
+      const max_response_bytes = Number($('maxResponseMiB').value) * 1048576;
       if (!Number.isInteger(timeout_seconds) || timeout_seconds < 10 || timeout_seconds > 1800 || !Number.isInteger(log_retention) || log_retention < 50 || log_retention > 10000) {
         $('settingsState').textContent = '超时需为 10–1800 秒，日志保留需为 50–10000 条';
         return;
       }
-      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention, debug: $('debugEnabled').checked };
+      if (!Number.isInteger(max_response_bytes) || max_response_bytes < 65536 || max_response_bytes > 67108864) {
+        $('settingsState').textContent = '最大响应大小需为 0.0625–64 MiB，换算后需为整数个字节';
+        return;
+      }
+      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention, max_response_bytes, debug: $('debugEnabled').checked };
       $('saveSettings').disabled = true;
       $('settingsState').textContent = '正在保存…';
       try { state.config = await api('/config', { method: 'PUT', body: next }); state.logDebug = state.config?.debug === true; loadLogs(); $('settingsState').textContent = '设置已保存'; }
