@@ -70,6 +70,13 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			}
 			b = []byte(strings.ReplaceAll(string(b), "/*__ERROR_RULES_MODULE__*/", string(errorRulesJS)))
 		}
+		if strings.Contains(string(b), "/*__RELEASE_NOTICE_MODULE__*/") {
+			releaseNoticeJS, err := ui.ReadFile("ui/release-notice.js")
+			if err != nil {
+				return nil, err
+			}
+			b = []byte(strings.ReplaceAll(string(b), "/*__RELEASE_NOTICE_MODULE__*/", string(releaseNoticeJS)))
+		}
 		return ManagementResponse{StatusCode: 200, Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}, "X-Content-Type-Options": []string{"nosniff"}}, Body: b}, nil
 	}
 	if !strings.HasPrefix(r.Path, apiBase+"/") {

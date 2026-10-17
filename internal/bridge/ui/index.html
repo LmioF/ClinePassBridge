@@ -60,6 +60,30 @@
     .brandmark { width: 32px; height: 32px; display: block; object-fit: contain; border-radius: 8px; flex: none; }
     .brand span:last-child { overflow-wrap: anywhere; }
     .version { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .release-bell { position: relative; flex: none; }
+    .release-bell svg { width: 18px; height: 18px; }
+    .release-bell[data-unread]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--surface); }
+    #releaseNoticeDialog { max-width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; }
+    #releaseNoticeDialog[open] { display: flex; flex-direction: column; }
+    .release-notice-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px 18px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    .release-notice-head h2 { margin: 0 0 6px; font-size: 19px; }
+    .release-notice-body { padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+    .release-notice-item + .release-notice-item { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .release-notice-label { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+    .release-notice-number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .release-notice-item h3 { margin: 0 0 10px; font-size: 15px; line-height: 1.6; }
+    #releaseNoticeDialog .release-notice-item p { font-size: 13px; line-height: 1.8; }
+    .release-notice-item p + p { margin-top: 8px; }
+    .release-notice-item strong { color: var(--ink); font-weight: 600; }
+    .release-notice-item code { background: var(--code-bg); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+    .release-notice-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--inset-bg); flex-shrink: 0; }
+    .release-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    @media (max-width: 520px) {
+      .release-notice-head, .release-notice-body { padding: 18px; }
+      .release-notice-foot { padding: 14px 18px; }
+      .release-notice-actions { width: 100%; }
+      .release-notice-actions .button { flex: 1; }
+    }
     h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
     h2 { margin: 0; font-size: 16px; line-height: 1.3; }
     p { margin: 0; }
@@ -495,6 +519,7 @@
   <main class="shell">
     <div class="topbar">
       <div class="brand"><img class="brandmark" src="__CLINE_LOGO_DATA__" width="32" height="32" alt="Cline"><span>ClinePassBridge</span></div>
+      <button class="button icon ghost release-bell" id="releaseNoticeButton" type="button" aria-label="查看更新公告" title="更新公告" aria-haspopup="dialog" aria-controls="releaseNoticeDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg></button>
     </div>
     <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
     <div class="notice error" id="globalError" role="alert" hidden></div>
@@ -674,6 +699,32 @@
       </div>
     </section>
   </main>
+
+  <dialog id="releaseNoticeDialog" aria-labelledby="releaseNoticeTitle">
+    <div class="release-notice-head">
+      <div><h2 id="releaseNoticeTitle">更新公告</h2><span class="badge" id="releaseNoticeVersion">ClinePassBridge</span></div>
+      <form method="dialog"><button class="button icon ghost" type="submit" aria-label="关闭更新公告" title="关闭"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    </div>
+    <div class="release-notice-body">
+      <section class="release-notice-item" aria-labelledby="releaseNoticeIdleTitle">
+        <div class="release-notice-label"><span class="release-notice-number">01</span><span class="badge warn">强烈建议</span></div>
+        <h3 id="releaseNoticeIdleTitle">关闭「流式卡住时提前截流」</h3>
+        <p>此功能有小概率导致提前截流，出现 <strong>502 错误</strong>，目前强烈建议关闭。</p>
+        <p>它原本是为前几天频繁出现的 Cline 流式卡住问题设计的。目前 Cline 那边已无此问题，就没有必要继续开启。</p>
+        <p>此功能上线时默认开启，<strong>老用户需要手动关闭并保存</strong>。目前版本已改为默认关闭，升级会保留已有设置。</p>
+      </section>
+      <section class="release-notice-item" aria-labelledby="releaseNoticeLimitTitle">
+        <div class="release-notice-label"><span class="release-notice-number">02</span><span class="badge">默认值调整 · 16 → 64 MiB</span></div>
+        <h3 id="releaseNoticeLimitTitle">调高最大响应大小，减少长输出截断</h3>
+        <p>此前插件内置的 <code>max_response_bytes</code> 默认值为 <strong>16 MiB</strong>。这一上限偏小，长思维链可能在输出后期超过限制，出现 <strong>413 错误并截断</strong>。</p>
+        <p>目前默认值已提高至 <strong>64 MiB</strong>。请老用户更新后前往「配置概览 → 请求与日志设置」，将「最大响应大小」调整为 <strong>64 MiB</strong> 并保存。</p>
+      </section>
+    </div>
+    <div class="release-notice-foot">
+      <p>关闭后，本版本不再自动提示</p>
+      <div class="release-notice-actions"><button class="button" id="releaseNoticeDismiss" type="button">知道了</button><button class="button primary" id="releaseNoticeSettings" type="button">前往配置概览</button></div>
+    </div>
+  </dialog>
 
   <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
     <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus data-icon="close">关闭</button></div>
@@ -1446,6 +1497,7 @@
     async function loadStatus() {
       const data = await api('/status');
       $('version').textContent = `版本 ${present(data?.version) ? data.version : '--'}`;
+      updateReleaseNotice(data?.version);
       const persistenceError = present(data?.log_persistence_error) ? String(data.log_persistence_error) : '';
       $('logPersistenceError').textContent = persistenceError ? `日志持久化失败：${persistenceError}。当前日志可能仅保留在内存中。` : '';
       $('logPersistenceError').hidden = !persistenceError;
@@ -2495,6 +2547,7 @@
     });
     /*__SCHEDULING_MODULE__*/
     /*__ERROR_RULES_MODULE__*/
+    /*__RELEASE_NOTICE_MODULE__*/
     $('rememberAuth').checked = window.PassBridgeRememberAuth?.() || false;
     restoreStatisticsRange();
     if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');
