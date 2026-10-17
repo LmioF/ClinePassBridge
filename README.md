@@ -90,3 +90,7 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 ## 许可与致谢
 
 [MIT License](LICENSE)。项目独立实现，曾参考 [cline-pass-switcher](https://github.com/munmunjaklin458-afk/cline-pass-switcher) 的公开协议行为，未复制其代码。
+
+## 友情链接
+
+[LINUX DO](linux.do)
