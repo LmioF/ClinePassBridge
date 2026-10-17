@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestModelExecutorRequiresAccountSelection(t *testing.T) {
+	s := NewService()
+	raw := jsonBytes(map[string]any{"config_yaml": []byte(fmt.Sprintf("data_dir: %q\n", filepath.ToSlash(t.TempDir())))})
+	for _, method := range []string{"plugin.register", "plugin.reconfigure"} {
+		result, err := s.Handle(method, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		capabilities := result.(map[string]any)["capabilities"].(map[string]any)
+		if scope := capabilities["executor_model_scope"]; scope != "oauth" {
+			t.Fatalf("%s: executor scope %q allows models to remain advertised without an enabled account", method, scope)
+		}
+	}
+}
+
 func TestUnconfiguredModelsStayDisabled(t *testing.T) {
 	for _, modelsYAML := range []string{"", "models: []\n", "models: null\n"} {
 		t.Run(fmt.Sprintf("config=%q", modelsYAML), func(t *testing.T) {
