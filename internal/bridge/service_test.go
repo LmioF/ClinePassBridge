@@ -172,7 +172,7 @@ func TestModelNamesArePreservedAndRegistered(t *testing.T) {
 	if err != nil || got != "cline-pass/deepseek-v4.1-flash" {
 		t.Fatalf("configured alias resolved to %q, %v", got, err)
 	}
-	models, err := s.Handle("model.static", nil)
+	models, err := s.Handle("model.for_auth", nil)
 	if err != nil || len(models.(map[string]any)["Models"].([]map[string]any)) == 0 {
 		t.Fatalf("registered models missing: %v, %v", models, err)
 	}
