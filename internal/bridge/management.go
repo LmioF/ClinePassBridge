@@ -389,6 +389,9 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 func (s *Service) deleteCredential(credentialID string) (any, error) {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
+	// Serialize removal with watcher reconciliation, which can replace the file.
+	s.authFileMu.Lock()
+	defer s.authFileMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.creds[credentialID]

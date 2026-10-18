@@ -339,9 +339,11 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 		dir = s.authDir
 		s.mu.RUnlock()
 	}
+	resolvedFile := false
 	if dir != "" && r.FileName != "" && filepath.Base(r.FileName) == r.FileName && !strings.ContainsAny(r.FileName, `/\`) {
 		if latest, err := os.ReadFile(filepath.Join(dir, r.FileName)); err == nil {
 			r.RawJSON = latest
+			resolvedFile = true
 		}
 	}
 	var c Credential
@@ -357,6 +359,14 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	if c.Label == "" {
 		c.Label = c.ID
 	}
+	s.mu.RLock()
+	revoked := s.revoked[c.ID]
+	s.mu.RUnlock()
+	if revoked && !resolvedFile {
+		// A watcher may have read RawJSON before deletion and queued its callback.
+		// Only a newly present physical credential can reimport a revoked ID.
+		return map[string]any{"Handled": false}, nil
+	}
 	s.applyParsedErrorRules(&c, dir, r.FileName, r.RawJSON)
 	staleQuota := !quotaStateEqual(c, normalizeQuotaCredential(c))
 	c = normalizeQuotaCredential(c)
@@ -367,6 +377,9 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 		c.QuotaBlock, c.QuotaIdentity, c.QuotaRevision = current.QuotaBlock, current.QuotaIdentity, current.QuotaRevision
 	} else if exists && current.APIKey != c.APIKey {
 		delete(s.quotaWriteErrors, c.ID)
+	}
+	if resolvedFile {
+		delete(s.revoked, c.ID)
 	}
 	s.creds[c.ID] = c
 	if staleQuota {
