@@ -107,7 +107,11 @@ func (s *Service) saveCredential(c, baseline Credential) error {
 			return err
 		}
 		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(jsonBytes(c), &fields)
+		// The physical snapshot owns unknown CPA fields. An older parsed copy
+		// must neither overwrite newly updated extensions nor restore removals.
+		owned := c
+		owned.extraFields = nil
+		_ = json.Unmarshal(jsonBytes(owned), &fields)
 		for _, key := range []string{"priority", "proxy_url", "model_revision", "routing_id", "quota_block", "quota_identity", "quota_revision"} {
 			delete(file.updated, key)
 		}
@@ -115,6 +119,11 @@ func (s *Service) saveCredential(c, baseline Credential) error {
 			file.updated[key] = value
 		}
 		body = json.RawMessage(jsonBytes(file.updated))
+		var merged Credential
+		if err := json.Unmarshal(body, &merged); err != nil {
+			return err
+		}
+		c.extraFields = merged.extraFields
 		latest, err := os.ReadFile(file.path)
 		if err != nil || !bytes.Equal(latest, file.original) {
 			return fail(409, "credential file changed before save; refresh and retry")
