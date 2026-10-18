@@ -198,8 +198,14 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 			return nil, e
 		}
 		return registration(), nil
-	case "executor.identifier", "auth.identifier":
+	case "executor.identifier", "auth.identifier", "quota.identifier":
 		return map[string]any{"identifier": Provider}, nil
+	case "quota.describe":
+		return map[string]any{"supported_providers": []string{Provider}, "display_name": "Cline Pass", "supports_reset": false}, nil
+	case "quota.fetch":
+		return s.fetchQuota(raw)
+	case "quota.reset":
+		return map[string]any{"success": false, "message": "Cline Pass does not support resetting upstream quota"}, nil
 	case "model.static", "model.for_auth":
 		return s.modelRegistration(), nil
 	case "auth.parse":
@@ -290,7 +296,7 @@ func (s *Service) refreshRegistrations() error {
 
 func registration() any {
 	// Static registration would keep models advertised after every account is disabled.
-	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "xiao-qiu-qiu", "GitHubRepository": "https://github.com/xiao-qiu-qiu/ClinePassBridge", "Description": "Cline Pass subscription adapter with reliable streaming, usage and actual provider logs", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "Persistent plugin state directory"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "oauth", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true}}
+	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "xiao-qiu-qiu", "GitHubRepository": "https://github.com/xiao-qiu-qiu/ClinePassBridge", "Description": "Cline Pass subscription adapter with reliable streaming, usage and actual provider logs", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "Persistent plugin state directory"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "oauth", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true}}
 }
 func (s *Service) modelRegistration() any {
 	cfg := s.config()
