@@ -79,6 +79,34 @@ type completion struct {
 func newCompletion() *completion {
 	return &completion{root: map[string]any{}, choices: map[int64]map[string]any{}, tools: map[int64]map[int64]map[string]any{}, expectedChoices: 1}
 }
+
+// Store pointers so a live Builder is never copied. String snapshots remain
+// valid because these buffers only append; final JSON owns its encoded bytes.
+type completionStringBuffer struct {
+	text strings.Builder
+}
+
+func (b *completionStringBuffer) MarshalJSON() ([]byte, error) {
+	return json.Marshal(b.text.String())
+}
+
+func completionString(value any) string {
+	if buffer, ok := value.(*completionStringBuffer); ok {
+		return buffer.text.String()
+	}
+	return str(value)
+}
+
+func appendCompletionString(dst map[string]any, key, fragment string) {
+	buffer, ok := dst[key].(*completionStringBuffer)
+	if !ok {
+		buffer = &completionStringBuffer{}
+		buffer.text.WriteString(str(dst[key]))
+		dst[key] = buffer
+	}
+	buffer.text.WriteString(fragment)
+}
+
 func (c *completion) observe(j map[string]any) {
 	metadata := map[string]any{}
 	for k, v := range j {
@@ -140,7 +168,7 @@ func (c *completion) observe(j map[string]any) {
 				c.hasOutput = true
 			case "content", "reasoning_content", "reasoning", "refusal":
 				if s := str(v); s != "" {
-					msg[k] = str(msg[k]) + s
+					appendCompletionString(msg, k, s)
 					c.hasOutput = true
 				}
 			case "function_call":
@@ -217,11 +245,11 @@ func (c *completion) completeAtEOF() bool {
 		}
 	}
 	validFunction := func(f map[string]any) bool {
-		if strings.TrimSpace(str(f["name"])) == "" {
+		if strings.TrimSpace(completionString(f["name"])) == "" {
 			return false
 		}
 		var args map[string]any
-		return json.Unmarshal([]byte(str(f["arguments"])), &args) == nil && args != nil
+		return json.Unmarshal([]byte(completionString(f["arguments"])), &args) == nil && args != nil
 	}
 	for index, choice := range c.choices {
 		tools := c.tools[index]
@@ -294,7 +322,7 @@ func mergeObjects(dst, src map[string]any, concat bool) {
 			mergeObjects(d, m, concat)
 		} else if concat {
 			if s, ok := v.(string); ok {
-				dst[k] = str(dst[k]) + s
+				appendCompletionString(dst, k, s)
 			} else if v != nil {
 				dst[k] = v
 			}
