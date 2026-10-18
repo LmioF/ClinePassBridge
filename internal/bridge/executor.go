@@ -11,6 +11,7 @@ import (
 
 type upstreamStream struct {
 	local        *egressLocalStream
+	output       *outputStreamLifecycle
 	deadline     time.Time
 	diagnostics  *modelTestDiagnostics
 	callbackID   string
@@ -533,6 +534,8 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		_, e = s.readJSON(us)
 		return failEarly(e)
 	}
+	output := &outputStreamLifecycle{service: s, id: r.StreamID}
+	us.output = output
 	// Preserve the existing RPC handoff separately from acknowledged downstream
 	// emits. Errors before the handoff still return through the RPC envelope.
 	ready := make(chan error, 1)
@@ -552,6 +555,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 				return requestCanceled("client disconnected")
 			}
 			*entry.DownstreamStarted = true
+			output.started.Store(true)
 			return nil
 		}
 		defer func() {
@@ -561,6 +565,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			if !started && err == nil {
 				err = upstreamProtocolFailure("upstream stream ended before any completion frame")
 			}
+			err = output.close(err, output.phase())
 			_ = s.observeQuotaError(c, err)
 			attempt.Status = statusOf(err)
 			attempt.Error = safeError(err)
@@ -571,7 +576,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			entry.Error = attempt.Error
 			entry.DurationMS = attempt.DurationMS
 			finishRequestRateLease(lease, err)
-			s.closeOutputStream(r.StreamID, &entry, err)
+			recordOutputStreamClose(&entry, err, output.supported)
 			s.appendLog(entry)
 			if !started {
 				ready <- err

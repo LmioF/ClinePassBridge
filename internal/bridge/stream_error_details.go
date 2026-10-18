@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,14 +22,45 @@ type streamCloseResponse struct {
 	ErrorDetailsSupported bool `json:"error_details_supported"`
 }
 
+// A watchdog may close the downstream while the consumer is blocked in emit.
+// Keep the callback and its receipt here; only the consumer writes LogEntry.
+type outputStreamLifecycle struct {
+	service   *Service
+	id        string
+	started   atomic.Bool
+	once      sync.Once
+	cause     error
+	supported bool
+}
+
+func (o *outputStreamLifecycle) phase() string {
+	if o.started.Load() {
+		return "after_output"
+	}
+	return "before_output"
+}
+
+func (o *outputStreamLifecycle) close(err error, phase string) error {
+	o.once.Do(func() {
+		o.cause = err
+		o.supported = o.service.sendOutputStreamClose(o.id, phase, err)
+	})
+	// Once also joins an in-flight watchdog close before its receipt is read.
+	return o.cause
+}
+
 func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error) {
 	if streamID == "" {
 		return
 	}
+	recordOutputStreamClose(entry, err, s.sendOutputStreamClose(streamID, entry.ErrorPhase, err))
+}
+
+func (s *Service) sendOutputStreamClose(streamID, phase string, err error) bool {
 	message, _ := s.HostErrorDetails(err)
 	payload := map[string]any{"stream_id": streamID, "error": message}
 	if err != nil {
-		details := streamErrorDetails{HTTPStatus: statusOf(err), Code: "upstream_error", Phase: entry.ErrorPhase}
+		details := streamErrorDetails{HTTPStatus: statusOf(err), Code: "upstream_error", Phase: phase}
 		var coded interface{ Code() string }
 		if errors.As(err, &coded) && coded.Code() != "" {
 			details.Code = coded.Code()
@@ -45,8 +78,12 @@ func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error)
 	}
 	var response streamCloseResponse
 	closeErr := s.call("host.stream.close", payload, &response)
+	return closeErr == nil && response.ErrorDetailsSupported
+}
+
+func recordOutputStreamClose(entry *LogEntry, err error, supported bool) {
 	entry.StreamErrorDetailsSupported = new(bool)
-	*entry.StreamErrorDetailsSupported = closeErr == nil && response.ErrorDetailsSupported
+	*entry.StreamErrorDetailsSupported = supported
 	if err != nil {
 		if !*entry.StreamErrorDetailsSupported {
 			entry.CooldownDisposition = "legacy_host_unknown"

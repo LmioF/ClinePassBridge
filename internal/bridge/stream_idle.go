@@ -20,9 +20,11 @@ type streamReadWatchdog struct {
 	stopped      bool
 	wake         chan struct{}
 	stopCh       chan struct{}
+	shutdown     <-chan struct{}
 	done         chan struct{}
 	closeOnce    sync.Once
 	closeStream  func()
+	closeOutput  func(error)
 	parentError  func() error
 }
 
@@ -35,7 +37,11 @@ func (s *Service) newStreamReadWatchdog(up upstreamStream, idleTimeout time.Dura
 		deadline: deadline, idleTimeout: idleTimeout,
 		debugEnabled: s.debugEnabled,
 		wake:         make(chan struct{}, 1), stopCh: make(chan struct{}), done: make(chan struct{}),
+		shutdown:    s.stopCh,
 		closeStream: func() { s.closeUpstream(up.StreamID) },
+	}
+	if up.output != nil {
+		w.closeOutput = func(err error) { up.output.close(err, up.output.phase()) }
 	}
 	if up.local != nil {
 		w.parentError = func() error {
@@ -58,6 +64,11 @@ func (w *streamReadWatchdog) streamDiagnostics() *StreamDiagnostics {
 }
 
 func (w *streamReadWatchdog) expired(now time.Time) error {
+	select {
+	case <-w.shutdown:
+		return bridgeUnavailable("ClinePassBridge is shutting down")
+	default:
+	}
 	if w.parentError != nil {
 		if err := w.parentError(); err != nil {
 			return err
@@ -151,7 +162,13 @@ func (w *streamReadWatchdog) run() {
 			w.err = w.expired(time.Now())
 		}
 		if w.err != nil {
+			failure := w.err
 			w.mu.Unlock()
+			// Unblock a backpressured emit before joining upstream cleanup. The
+			// final consumer close shares the same Once and cannot close twice.
+			if w.closeOutput != nil {
+				w.closeOutput(failure)
+			}
 			w.close()
 			return
 		}
@@ -168,6 +185,7 @@ func (w *streamReadWatchdog) run() {
 		case <-w.wake:
 		case <-w.stopCh:
 			return
+		case <-w.shutdown:
 		}
 	}
 }
