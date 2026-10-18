@@ -38,7 +38,7 @@ type Service struct {
 	stopCh               chan struct{}
 	logWriteError        string
 	observationTimer     *time.Timer
-	logsDirty            bool
+	logStore             requestLogStore
 	statistics           statisticsState
 	statisticsLoaded     bool
 	statisticsWriteError string
@@ -175,8 +175,8 @@ func (s *Service) configure(raw json.RawMessage) (err error) {
 			return err
 		}
 		s.loadEstimatesLocked()
-		if b, e := os.ReadFile(filepath.Join(cfg.DataDir, "requests.json")); e == nil {
-			_ = json.Unmarshal(b, &s.logs)
+		if e := s.loadRequestLogsLocked(); e != nil {
+			return e
 		}
 		if e := s.loadStatisticsLocked(); e != nil {
 			return e
@@ -186,6 +186,8 @@ func (s *Service) configure(raw json.RawMessage) (err error) {
 	}
 	if len(s.logs) > cfg.LogRetention {
 		s.logs = s.logs[len(s.logs)-cfg.LogRetention:]
+		s.queueRequestLogLocked(nil, false)
+		s.flushRequestLogsLocked()
 	}
 	return nil
 }
@@ -463,8 +465,9 @@ func (s *Service) appendLog(entry LogEntry) {
 	if len(s.logs) > s.cfg.LogRetention {
 		s.logs = s.logs[len(s.logs)-s.cfg.LogRetention:]
 	}
-	s.logsDirty = true
+	s.queueRequestLogLocked(&s.logs[len(s.logs)-1], merged)
 	if merged {
+		s.flushRequestLogsLocked()
 		s.scheduleObservationsLocked()
 	} else {
 		s.flushObservationsLocked()

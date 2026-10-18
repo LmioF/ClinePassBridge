@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -168,15 +167,9 @@ func (s *Service) scheduleObservationsLocked() {
 
 // All writers share s.mu: an older snapshot can never overwrite a newer one.
 func (s *Service) flushObservationsLocked() {
-	if s.logsDirty {
-		err := atomicJSON(filepath.Join(s.cfg.DataDir, "requests.json"), s.logs)
-		s.logWriteError = safeError(err)
-		if err == nil {
-			s.logsDirty = false
-		}
-	}
+	s.flushRequestLogsLocked()
 	s.flushStatisticsLocked()
-	if s.logsDirty || len(s.statistics.dirty) > 0 {
+	if s.logWriteError != "" || len(s.statistics.dirty) > 0 {
 		s.scheduleObservationsLocked()
 	}
 }

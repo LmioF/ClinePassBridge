@@ -79,10 +79,7 @@ func TestDebugStreamRecording(t *testing.T) {
 				} else if entry.StreamDiagnostics != nil {
 					t.Fatal("debug-off request allocated stream diagnostics")
 				}
-				raw, err := os.ReadFile(filepath.Join(s.config().DataDir, "requests.json"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				raw := observabilityJSON(t, observabilityPersistedLogs(t, s.config().DataDir))
 				if bytes.Contains(raw, []byte(`"stream_diagnostics"`)) != enabled {
 					t.Fatalf("persisted diagnostics presence does not match debug=%t", enabled)
 				}
@@ -104,11 +101,8 @@ func TestDebugLogsHideAndRestoreHistory(t *testing.T) {
 	pending := LogEntry{ID: "in-flight", Status: 502, ErrorKind: upstreamStreamIdleTimeoutKind, StreamEnd: "idle_timeout", EffectiveFrameCount: 1, StreamDiagnostics: &StreamDiagnostics{UpstreamReadCount: 1}}
 	observabilityManagement(t, s, "PUT", "/config", nil, []byte(`{"debug":false}`), 200)
 	s.appendLog(pending)
-	path := filepath.Join(s.config().DataDir, "requests.json")
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := s.config().DataDir
+	before := observabilityJSON(t, observabilityPersistedLogs(t, dir))
 	// Reload while disabled, so persisted history must survive as well as memory.
 	s = observabilityService(t, s.config().DataDir)
 	for _, enabled := range []bool{false, true} {
@@ -143,9 +137,9 @@ func TestDebugLogsHideAndRestoreHistory(t *testing.T) {
 		if !enabled && bytes.Contains(response.Body, []byte(`"stream_diagnostics"`)) {
 			t.Fatal("debug-off API exposed historical stream_diagnostics")
 		}
-		after, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatalf("debug visibility changed persisted request history: %v", err)
+		after := observabilityJSON(t, observabilityPersistedLogs(t, dir))
+		if !bytes.Equal(before, after) {
+			t.Fatal("debug visibility changed persisted request history")
 		}
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -153,6 +155,212 @@ func observabilitySeedLogs(t *testing.T, dir string, logs []LogEntry) {
 	}
 }
 
+func observabilityPersistedLogs(t *testing.T, dir string) []LogEntry {
+	t.Helper()
+	s := NewService()
+	s.cfg.DataDir = dir
+	if err := s.loadRequestLogsLocked(); err != nil {
+		t.Fatal(err)
+	}
+	return s.logs
+}
+
+func requestJournalService(t *testing.T, dir string) *Service {
+	t.Helper()
+	s := NewService()
+	s.cfg.DataDir, s.cfg.LogRetention = dir, 1000
+	// These tests explicitly drive persistence boundaries without timer sleeps.
+	s.stopped = true
+	if err := s.loadRequestLogsLocked(); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestRequestJournalMigratesHistoryWithoutRewritingSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	history := make([]LogEntry, 60)
+	for i := range history {
+		history[i] = LogEntry{ID: fmt.Sprintf("legacy-%d", i), Model: strings.Repeat("m", 4096), Status: 200}
+	}
+	observabilitySeedLogs(t, dir, history)
+	before, err := os.ReadFile(filepath.Join(dir, "requests.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := requestJournalService(t, dir)
+	s.appendLog(LogEntry{ID: "new", Model: "fixture", Status: 200})
+	journal, err := os.ReadFile(filepath.Join(dir, requestJournalName))
+	if err != nil || len(journal)*100 >= len(before) {
+		t.Fatalf("small completion rewrote history: journal_bytes=%d legacy_bytes=%d error=%v", len(journal), len(before), err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "requests.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("legacy migration changed the original history snapshot")
+	}
+	if got := observabilityPersistedLogs(t, dir); !reflect.DeepEqual(got, s.logs) || len(got) != 61 {
+		t.Fatalf("restart lost legacy or newly completed history: rows=%d", len(got))
+	}
+}
+
+func TestRequestJournalRetriesAbsoluteBackoffUpdates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, requestJournalName)
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s := requestJournalService(t, t.TempDir())
+	s.cfg.DataDir = dir
+	for i := range 2 {
+		s.appendLog(LogEntry{ID: fmt.Sprintf("local-%d", i), CredentialID: "credential", Model: "alias", UpstreamModel: "upstream", Status: 429, UpstreamSkipped: true, BackoffWindowID: "window"})
+	}
+	if s.logWriteError == "" || len(s.logStore.pending) != 2 {
+		t.Fatal("failed journal writes were not retained for retry")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.flushObservationsLocked()
+	if s.logWriteError != "" {
+		t.Fatal(s.logWriteError)
+	}
+	got := observabilityPersistedLogs(t, dir)
+	if !reflect.DeepEqual(got, s.logs) || len(got) != 1 || got[0].RequestCount != 2 {
+		t.Fatalf("retry duplicated or lost aggregated counts: %+v", got)
+	}
+	// A successful merge is durable immediately, without shutdown or a 2s timer.
+	s.appendLog(LogEntry{ID: "local-2", CredentialID: "credential", Model: "alias", UpstreamModel: "upstream", Status: 429, UpstreamSkipped: true, BackoffWindowID: "window"})
+	if got = observabilityPersistedLogs(t, dir); len(got) != 1 || got[0].RequestCount != 3 {
+		t.Fatalf("merged request not durably appended: %+v", got)
+	}
+}
+
+func TestRequestJournalRecoversTornTailAndRejectsMiddleCorruption(t *testing.T) {
+	dir := t.TempDir()
+	s := requestJournalService(t, dir)
+	s.appendLog(LogEntry{ID: "complete", Status: 200})
+	path := filepath.Join(dir, requestJournalName)
+	complete, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, append(append([]byte{}, complete...), []byte(`{"sequence":2,"entry":`)...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = requestJournalService(t, dir)
+	s.appendLog(LogEntry{ID: "after-crash", Status: 200})
+	if got := observabilityPersistedLogs(t, dir); !reflect.DeepEqual(got, s.logs) || len(got) != 2 {
+		t.Fatalf("torn last line damaged the next append: %+v", got)
+	}
+	valid, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupted := append([]byte("not JSON\n"), valid...)
+	if err = os.WriteFile(path, corrupted, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = NewService()
+	s.cfg.DataDir = dir
+	if err = s.loadRequestLogsLocked(); err == nil {
+		t.Fatal("interior journal corruption was silently ignored")
+	}
+	s = NewService()
+	raw := observabilityJSON(t, map[string]any{"config_yaml": []byte(fmt.Sprintf("data_dir: %q\n", filepath.ToSlash(dir)))})
+	if registration, err := s.Handle("plugin.register", raw); err == nil || registration != nil || s.loaded {
+		t.Fatalf("corrupt journal was registered: registration=%v loaded=%t error=%v", registration, s.loaded, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(corrupted, after) {
+		t.Fatal("failed recovery modified the damaged journal")
+	}
+}
+
+func TestRequestJournalCompactionCrashWindowsAndRetention(t *testing.T) {
+	dir := t.TempDir()
+	s := requestJournalService(t, dir)
+	s.cfg.LogRetention = 60
+	for i := range 55 {
+		s.appendLog(LogEntry{ID: fmt.Sprintf("request-%d", i), Status: 200})
+	}
+	// Match hot PUT /config semantics: the next completion applies the new limit.
+	observabilityManagement(t, s, "PUT", "/config", nil, []byte(`{"log_retention":50}`), 200)
+	if len(s.logs) != 55 {
+		t.Fatal("hot setting unexpectedly discarded history before a completion")
+	}
+	s.appendLog(LogEntry{ID: "after-retention", Status: 200})
+	observabilityManagement(t, s, "PUT", "/config", nil, []byte(`{"log_retention":100}`), 200)
+	s.appendLog(LogEntry{ID: "after-increase", Status: 200})
+	journalPath := filepath.Join(dir, requestJournalName)
+	journal, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Snapshot replacement failure must leave the complete replayable journal.
+	snapshotPath := filepath.Join(dir, requestSnapshotName)
+	if err = os.Mkdir(snapshotPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.compactRequestLogsLocked(); err == nil {
+		t.Fatal("snapshot replacement unexpectedly succeeded over a directory")
+	}
+	if err = os.Remove(snapshotPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := observabilityPersistedLogs(t, dir); !reflect.DeepEqual(got, s.logs) {
+		t.Fatal("failed compaction lost completed history")
+	}
+	if err = s.compactRequestLogsLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if got := observabilityPersistedLogs(t, dir); !reflect.DeepEqual(got, s.logs) {
+		t.Fatal("compacted snapshot lost history")
+	}
+	// Simulate a crash after snapshot rename, before the old journal is truncated.
+	if err = os.WriteFile(journalPath, journal, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = requestJournalService(t, dir)
+	if len(s.logs) != 51 || s.logs[0].ID != "request-6" {
+		t.Fatalf("stale journal resurrected evicted rows: rows=%d first=%q", len(s.logs), s.logs[0].ID)
+	}
+	s.appendLog(LogEntry{ID: "post-compaction", Status: 200})
+	if got := observabilityPersistedLogs(t, dir); !reflect.DeepEqual(got, s.logs) || len(got) != 52 {
+		t.Fatal("post-compaction append duplicated or lost history")
+	}
+}
+
+func TestRequestJournalClearAndRetentionReplay(t *testing.T) {
+	dir := t.TempDir()
+	observabilitySeedLogs(t, dir, []LogEntry{{ID: "old", Status: 200}})
+	events := []requestLogEvent{
+		{Sequence: 1, Clear: true, Retention: 50},
+		{Sequence: 2, Entry: &LogEntry{ID: "new", Status: 200}, Retention: 50},
+		{Sequence: 3, Retention: 50},
+	}
+	var journal bytes.Buffer
+	for _, event := range events {
+		journal.Write(observabilityJSON(t, event))
+		journal.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, requestJournalName), journal.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := requestJournalService(t, dir)
+	if len(s.logs) != 1 || s.logs[0].ID != "new" {
+		t.Fatalf("clear replay resurrected old history: %+v", s.logs)
+	}
+	if err := s.compactRequestLogsLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, requestJournalName), journal.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := observabilityPersistedLogs(t, dir); len(got) != 1 || got[0].ID != "new" {
+		t.Fatalf("clear checkpoint replay resurrected old history: %+v", got)
+	}
+}
+
 func TestObservabilityConcurrentLocalBackoff(t *testing.T) {
 	s := observabilityService(t, "")
 	c := Credential{Type: Provider, ID: "credential-1", Label: "fixture", APIKey: "offline-key"}
@@ -222,14 +430,7 @@ func TestObservabilityConcurrentLocalBackoff(t *testing.T) {
 	s.mu.RUnlock()
 	// Shutdown is the observable durability boundary; do not sleep for the timer.
 	observabilityShutdown(t, s)
-	b, err := os.ReadFile(filepath.Join(s.config().DataDir, "requests.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var persisted []LogEntry
-	if err := json.Unmarshal(b, &persisted); err != nil {
-		t.Fatal(err)
-	}
+	persisted := observabilityPersistedLogs(t, s.config().DataDir)
 	if len(persisted) != 1 || persisted[0].RequestCount != count {
 		t.Errorf("shutdown persisted %d rows, want one with count 100: %+v", len(persisted), persisted)
 	}

@@ -1726,10 +1726,7 @@ func TestUsageEstimateIntegrationReturnsTotalWithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("估算存档未写入: %v", err)
 	}
-	requests, err := os.ReadFile(filepath.Join(s.config().DataDir, "requests.json"))
-	if err != nil {
-		t.Fatalf("请求日志未写入: %v", err)
-	}
+	requests := observabilityJSON(t, observabilityPersistedLogs(t, s.config().DataDir))
 	for name, blob := range map[string][]byte{
 		"responses":      append(append([]byte{}, firstBody...), secondBody...),
 		"estimates.json": estimates,
