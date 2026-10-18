@@ -519,7 +519,7 @@
   <main class="shell">
     <div class="topbar">
       <div class="brand"><img class="brandmark" src="__CLINE_LOGO_DATA__" width="32" height="32" alt="Cline"><span>ClinePassBridge</span></div>
-      <button class="button icon ghost release-bell" id="releaseNoticeButton" type="button" aria-label="查看更新公告" title="更新公告" aria-haspopup="dialog" aria-controls="releaseNoticeDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg></button>
+      <button class="button icon ghost release-bell" id="releaseNoticeButton" type="button" aria-label="查看公告" title="公告" aria-haspopup="dialog" aria-controls="releaseNoticeDialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg></button>
     </div>
     <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
     <div class="notice error" id="globalError" role="alert" hidden></div>
@@ -700,10 +700,11 @@
     </section>
   </main>
 
-  <dialog id="releaseNoticeDialog" aria-labelledby="releaseNoticeTitle">
+  <!-- 发布时仅在需要重新弹出公告时递增 data-notice-revision，普通版本升级保持不变。 -->
+  <dialog id="releaseNoticeDialog" data-notice-revision="1" aria-labelledby="releaseNoticeTitle">
     <div class="release-notice-head">
-      <div><h2 id="releaseNoticeTitle">更新公告</h2><span class="badge" id="releaseNoticeVersion">ClinePassBridge</span></div>
-      <form method="dialog"><button class="button icon ghost" type="submit" aria-label="关闭更新公告" title="关闭"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+      <div><h2 id="releaseNoticeTitle">公告</h2><span class="badge" id="releaseNoticeVersion">ClinePassBridge</span></div>
+      <form method="dialog"><button class="button icon ghost" type="submit" aria-label="关闭公告" title="关闭"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
     </div>
     <div class="release-notice-body">
       <section class="release-notice-item" aria-labelledby="releaseNoticeIdleTitle">
@@ -721,7 +722,7 @@
       </section>
     </div>
     <div class="release-notice-foot">
-      <p>关闭后，本版本不再自动提示</p>
+      <p>关闭后不再自动提示</p>
       <div class="release-notice-actions"><button class="button" id="releaseNoticeDismiss" type="button">知道了</button><button class="button primary" id="releaseNoticeSettings" type="button">前往配置概览</button></div>
     </div>
   </dialog>

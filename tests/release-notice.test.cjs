@@ -5,8 +5,10 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../internal/bridge/ui/release-notice.js'), 'utf8');
+const markup = fs.readFileSync(path.join(__dirname, '../internal/bridge/ui/index.html'), 'utf8');
+const publishedRevision = markup.match(/<dialog id="releaseNoticeDialog" data-notice-revision="([^"]+)"/)[1];
 
-function page({ store = new Map(), blockedStorage = false, pathname = '/v0/resource/plugins/clinepassbridge/console', authOpen = false } = {}) {
+function page({ store = new Map(), blockedStorage = false, pathname = '/v0/resource/plugins/clinepassbridge/console', authOpen = false, noticeRevision = publishedRevision } = {}) {
   const pending = [];
   const nodes = new Map();
   const documentEvents = new Map();
@@ -19,6 +21,7 @@ function page({ store = new Map(), blockedStorage = false, pathname = '/v0/resou
       this.events = new Map();
       this.attributes = new Set();
       this.openCount = 0;
+      this.dataset = id === 'releaseNoticeDialog' ? { noticeRevision } : {};
     }
     addEventListener(name, fn) {
       const handlers = this.events.get(name) || [];
@@ -46,6 +49,8 @@ function page({ store = new Map(), blockedStorage = false, pathname = '/v0/resou
     nodes.set(id, new Node(id, id === 'authDialog' && authOpen));
   }
   const localStorage = {
+    get length() { if (blockedStorage) throw Error('blocked'); return store.size; },
+    key(index) { if (blockedStorage) throw Error('blocked'); return [...store.keys()][index] ?? null; },
     getItem(key) { if (blockedStorage) throw Error('blocked'); return store.get(key) ?? null; },
     setItem(key, value) { if (blockedStorage) throw Error('blocked'); store.set(key, value); },
   };
@@ -78,7 +83,7 @@ function page({ store = new Map(), blockedStorage = false, pathname = '/v0/resou
   };
 }
 
-test('first visit presents once; dismissal persists across refresh; a new version presents again', () => {
+test('first visit presents once; dismissal persists across refresh and plugin upgrades', () => {
   const first = page();
   first.update('0.18.0');
   assert.equal(first.dialog.openCount, 1);
@@ -94,11 +99,54 @@ test('first visit presents once; dismissal persists across refresh; a new versio
   refreshed.update('0.18.0');
   assert.equal(refreshed.dialog.open, false);
   refreshed.update('0.19.0');
-  assert.equal(refreshed.dialog.open, true);
+  assert.equal(refreshed.dialog.open, false);
+  assert.equal(refreshed.unread(), false);
   assert.equal(refreshed.nodes.get('releaseNoticeVersion').textContent, 'v0.19.0');
+  const upgraded = page({ store: first.store });
+  upgraded.update('0.20.0');
+  assert.equal(upgraded.dialog.open, false);
   const otherService = page({ store: first.store, pathname: '/other/v0/resource/plugins/clinepassbridge/console' });
   otherService.update('0.18.0');
   assert.equal(otherService.dialog.open, true);
+});
+
+test('only an explicitly published new notice revision prompts existing readers again', () => {
+  const first = page({ noticeRevision: '1' });
+  first.update('1.0');
+  first.click('releaseNoticeDismiss');
+  const next = page({ store: first.store, noticeRevision: '2' });
+  next.update('1.0');
+  assert.equal(next.dialog.open, true, 'a notice revision can change without a plugin upgrade');
+  assert.equal(next.unread(), true);
+  next.click('releaseNoticeDismiss');
+  const upgraded = page({ store: first.store, noticeRevision: '2' });
+  upgraded.update('2.0');
+  assert.equal(upgraded.dialog.open, false);
+  assert.equal(upgraded.unread(), false);
+});
+
+test('initial revision inherits this service legacy dismissals; later revisions do not', () => {
+  const legacyKey = 'clinepassbridge:release-notice:https://cpa.example/v0/resource/plugins/clinepassbridge/console:0.18.0';
+  const store = new Map([[legacyKey, '1']]);
+  const migrated = page({ store, noticeRevision: '1' });
+  migrated.update('1.0');
+  assert.equal(migrated.dialog.open, false);
+  assert.equal(migrated.unread(), false);
+  const [newKey] = [...store.keys()].filter(key => key !== legacyKey);
+  assert.ok(newKey.startsWith('clinepassbridge:notice:'));
+  store.delete(legacyKey);
+  const refreshed = page({ store, noticeRevision: '1' });
+  refreshed.update('2.0');
+  assert.equal(refreshed.dialog.open, false, 'migration persists independently of the legacy record');
+  const next = page({ store: new Map([[legacyKey, '1']]), noticeRevision: '2' });
+  next.update('2.0');
+  assert.equal(next.dialog.open, true);
+  const otherService = page({ store: new Map([[legacyKey, '1']]), pathname: '/other/console', noticeRevision: '1' });
+  otherService.update('1.0');
+  assert.equal(otherService.dialog.open, true);
+  const unreadLegacy = page({ store: new Map([[legacyKey, '0']]), noticeRevision: '1' });
+  unreadLegacy.update('1.0');
+  assert.equal(unreadLegacy.dialog.open, true);
 });
 
 test('manual bell reopens read notices; settings navigates and acknowledges; Escape also acknowledges', () => {
@@ -129,26 +177,26 @@ test('automatic notice waits for authentication and any other open dialog to clo
   assert.equal(view.dialog.openCount, 1);
 });
 
-test('a manual notice opened without version does not acknowledge a subsequently fetched version', () => {
-  const view = page();
-  view.click('releaseNoticeButton');
-  assert.equal(view.dialog.open, true);
-  assert.equal(view.nodes.get('releaseNoticeVersion').textContent, '更新公告');
-  view.update('1.0');
-  view.click('releaseNoticeDismiss');
-  assert.equal(view.store.size, 0);
-  assert.equal(view.unread(), true);
-  assert.equal(view.dialog.openCount, 2, 'known version receives its own presentation');
-  view.dialog.escape();
-  view.flush();
-  assert.equal(view.store.size, 1);
+test('a manual notice can be acknowledged before authentication returns the plugin version', () => {
+  for (const versionArrivesWhileOpen of [false, true]) {
+    const view = page();
+    view.click('releaseNoticeButton');
+    assert.equal(view.dialog.open, true);
+    assert.equal(view.nodes.get('releaseNoticeVersion').textContent, '公告');
+    if (versionArrivesWhileOpen) view.update('1.0');
+    view.click('releaseNoticeDismiss');
+    view.update('1.0');
+    assert.equal(view.store.size, 1);
+    assert.equal(view.unread(), false);
+    assert.equal(view.dialog.openCount, 1);
+  }
 });
 
 test('blocked storage still acknowledges within this page and cross-tab acknowledgement cancels a pending notice', () => {
   const blocked = page({ blockedStorage: true });
   blocked.update('1.0');
   blocked.click('releaseNoticeDismiss');
-  blocked.update('1.0');
+  blocked.update('2.0');
   assert.equal(blocked.dialog.openCount, 1);
   assert.equal(blocked.unread(), false);
 
@@ -163,4 +211,23 @@ test('blocked storage still acknowledges within this page and cross-tab acknowle
   pending.flush();
   assert.equal(pending.dialog.open, false);
   assert.equal(pending.unread(), false);
+});
+
+test('cross-tab legacy dismissal migrates only the initial revision and ignores other services', () => {
+  const legacyKey = 'clinepassbridge:release-notice:https://cpa.example/v0/resource/plugins/clinepassbridge/console:0.18.0';
+  for (const noticeRevision of ['1', '2']) {
+    const pending = page({ authOpen: true, noticeRevision });
+    pending.update('1.0');
+    pending.storage({ key: legacyKey, newValue: '1' });
+    pending.nodes.get('authDialog').close();
+    pending.flush();
+    assert.equal(pending.dialog.open, noticeRevision === '2');
+    assert.equal(pending.unread(), noticeRevision === '2');
+  }
+  const otherService = page({ authOpen: true, noticeRevision: '1', pathname: '/other/console' });
+  otherService.update('1.0');
+  otherService.storage({ key: legacyKey, newValue: '1' });
+  otherService.nodes.get('authDialog').close();
+  otherService.flush();
+  assert.equal(otherService.dialog.open, true);
 });

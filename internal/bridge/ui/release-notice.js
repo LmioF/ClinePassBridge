@@ -1,45 +1,52 @@
-/* Release notice state is isolated from its markup and scoped to this console. */
+/* Notice dismissal is scoped to this console and the publisher's notice revision. */
 const releaseNoticeModule = (() => {
   'use strict';
   const button = document.getElementById('releaseNoticeButton');
   const dialog = document.getElementById('releaseNoticeDialog');
   const versionLabel = document.getElementById('releaseNoticeVersion');
-  const dismissed = new Set();
-  const presented = new Set();
   const service = location.origin + location.pathname.replace(/\/+$/, '');
+  const noticeRevision = dialog.dataset.noticeRevision?.trim() || '1';
+  const storageKey = `clinepassbridge:notice:${service}:${encodeURIComponent(noticeRevision)}`;
+  const legacyPrefix = `clinepassbridge:release-notice:${service}:`;
   let currentVersion = '';
-  let displayedVersion = '';
+  let dismissed = false;
+  let presented = false;
   let active = false;
   let retryQueued = false;
 
-  const storageKey = version => `clinepassbridge:release-notice:${service}:${encodeURIComponent(version)}`;
-  function wasDismissed(version) {
-    if (dismissed.has(version)) return true;
+  function acknowledge() {
+    dismissed = true;
+    try { localStorage.setItem(storageKey, '1'); } catch { /* Keep page-local acknowledgement. */ }
+  }
+  function restoreDismissal() {
     try {
-      if (localStorage.getItem(storageKey(version)) === '1') {
-        dismissed.add(version);
-        return true;
+      dismissed = localStorage.getItem(storageKey) === '1';
+      // Only the initial revision inherits old version-based acknowledgements.
+      // Explicitly publishing a new revision must prompt even existing readers.
+      if (!dismissed && noticeRevision === '1') {
+        for (let index = 0; index < localStorage.length; index++) {
+          const key = localStorage.key(index);
+          if (key?.startsWith(legacyPrefix) && localStorage.getItem(key) === '1') {
+            acknowledge();
+            break;
+          }
+        }
       }
     } catch { /* Private browsing may block storage; page state still works. */ }
-    return false;
   }
   function render() {
-    const labelVersion = active ? displayedVersion : currentVersion;
-    versionLabel.textContent = labelVersion ? `v${labelVersion}` : '更新公告';
-    button.toggleAttribute('data-unread', !!currentVersion && !wasDismissed(currentVersion));
+    versionLabel.textContent = currentVersion ? `v${currentVersion}` : '公告';
+    button.toggleAttribute('data-unread', !!currentVersion && !dismissed);
   }
   function open(manual = false) {
     if (active || dialog.open) return;
     if (!manual) {
-      if (!currentVersion || presented.has(currentVersion) || wasDismissed(currentVersion)) return;
+      if (!currentVersion || presented || dismissed) return;
       if (document.querySelector('dialog[open]')) return;
     }
-    // Capture the version actually presented. A version fetched later must not
-    // be acknowledged by closing a notice opened before authentication.
-    displayedVersion = currentVersion;
     dialog.showModal();
     active = true;
-    if (displayedVersion) presented.add(displayedVersion);
+    presented = true;
     render();
   }
   function retry() {
@@ -59,11 +66,7 @@ const releaseNoticeModule = (() => {
   dialog.addEventListener('close', () => {
     if (!active) return;
     active = false;
-    if (displayedVersion) {
-      dismissed.add(displayedVersion);
-      try { localStorage.setItem(storageKey(displayedVersion), '1'); } catch { /* Keep page-local acknowledgement. */ }
-    }
-    displayedVersion = '';
+    acknowledge();
     render();
     retry();
   });
@@ -71,10 +74,12 @@ const releaseNoticeModule = (() => {
   // finish their own close handlers before the pending announcement is shown.
   document.addEventListener('close', retry, true);
   window.addEventListener('storage', event => {
-    if (!currentVersion || event.key !== storageKey(currentVersion) || event.newValue !== '1') return;
-    dismissed.add(currentVersion);
+    const legacyDismissal = noticeRevision === '1' && event.key?.startsWith(legacyPrefix);
+    if ((event.key !== storageKey && !legacyDismissal) || event.newValue !== '1') return;
+    acknowledge();
     render();
   });
+  restoreDismissal();
   render();
   return {
     update(version) {
