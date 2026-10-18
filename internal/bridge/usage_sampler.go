@@ -63,34 +63,58 @@ func (s *Service) usageSamplingTargets(now time.Time) []string {
 		}
 	}
 	sort.Strings(ids)
-	groups := map[string]string{}
+	groups := map[string][]string{}
 	for _, id := range ids {
 		c := s.creds[id]
 		group := "credential:" + id
-		entry := s.usageCache[id]
 		if account := s.quotaAccountHashLocked(c); account != "" {
 			group = "account:" + account
 		}
-		chosen, exists := groups[group]
-		if !exists {
-			groups[group] = id
-			continue
-		}
-		// A working sibling key can keep account sampling alive if another expires.
-		old := s.usageCache[chosen]
-		if entry != nil && entry.fingerprint == usageFingerprint(c) && entry.value.Status == "ok" && (old == nil || old.value.Status != "ok") {
-			groups[group] = id
-		}
+		groups[group] = append(groups[group], id)
 	}
 	var targets []string
-	for _, id := range groups {
-		entry := s.usageCache[id]
-		if entry != nil && entry.fingerprint == usageFingerprint(s.creds[id]) {
-			if entry.done != nil || entry.value.CheckedAt != nil && now.Sub(*entry.value.CheckedAt) < backgroundUsageTTL(entry.value) && !quotaRecoveryCheckDue(s.creds[id], entry.value, now) {
-				continue
+	for _, members := range groups {
+		chosen, chosenRank := "", 3
+		var chosenEntry *usageCacheEntry
+		busy := false
+		for _, id := range members {
+			c := s.creds[id]
+			entry := s.usageCache[id]
+			if entry != nil && entry.fingerprint != usageFingerprint(c) {
+				entry = nil
+			}
+			if entry != nil && entry.done != nil {
+				busy = true
+				break
+			}
+			// Prefer a working key, then an untried key. Failed siblings retain
+			// their own backoff and rotate by the oldest actual attempt.
+			rank := 1
+			if entry != nil && entry.value.Status == "ok" {
+				rank = 0
+			} else if entry != nil && entry.value.CheckedAt != nil {
+				rank = 2
+				if now.Sub(*entry.value.CheckedAt) < backgroundUsageTTL(entry.value) && !quotaRecoveryCheckDue(c, entry.value, now) {
+					continue
+				}
+			}
+			prefer := rank < chosenRank
+			if rank == chosenRank && entry != nil && chosenEntry != nil && entry.value.CheckedAt != nil {
+				// A newer successful account snapshot avoids a redundant fetch;
+				// among failures, the least recently attempted key gets its turn.
+				prefer = chosenEntry.value.CheckedAt == nil || rank == 0 && entry.value.CheckedAt.After(*chosenEntry.value.CheckedAt) || rank == 2 && entry.value.CheckedAt.Before(*chosenEntry.value.CheckedAt)
+			}
+			if prefer {
+				chosen, chosenRank, chosenEntry = id, rank, entry
 			}
 		}
-		targets = append(targets, id)
+		if busy || chosen == "" {
+			continue
+		}
+		if chosenEntry != nil && chosenEntry.value.CheckedAt != nil && now.Sub(*chosenEntry.value.CheckedAt) < backgroundUsageTTL(chosenEntry.value) && !quotaRecoveryCheckDue(s.creds[chosen], chosenEntry.value, now) {
+			continue
+		}
+		targets = append(targets, chosen)
 	}
 	sort.Strings(targets)
 	return targets

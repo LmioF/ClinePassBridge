@@ -406,6 +406,93 @@ func TestUsageSamplerReplacedKeyAndAuthFailureBackoff(t *testing.T) {
 	}
 }
 
+func TestUsageSamplerColdAccountTriesUnattemptedSibling(t *testing.T) {
+	host := newSamplerHost()
+	host.failures["expired-key"] = http.StatusUnauthorized
+	host.accounts["working-key"] = "same-account"
+	s := samplerService(t, host)
+	for _, c := range []Credential{samplerCredential("a-expired", "expired-key"), samplerCredential("b-working", "working-key")} {
+		c.QuotaIdentity = &QuotaIdentity{AccountHash: estimateHash("cline-account", "same-account"), KeyHash: quotaKeyHash(c)}
+		quotaTestAuth(t, s, c)
+	}
+
+	s.sampleUsage()
+	if got := host.pathRequests(samplerLimitsPath); len(got) != 1 || got[0].key != "expired-key" {
+		t.Fatalf("cold account sampled more than one key: %+v", got)
+	}
+	// Even after the first key's backoff expires, the untried sibling must win.
+	ageSamplerCache(t, s, 6*time.Minute, "a-expired")
+	failedAt := *s.usageCache["a-expired"].value.CheckedAt
+	s.sampleUsage()
+	if !samplerLedger(s, "ok", "b-working")() {
+		t.Fatal("expired first key starved the working sibling after a cold start")
+	}
+	if !s.usageCache["a-expired"].value.CheckedAt.Equal(failedAt) || s.usageCache["a-expired"].value.Status != "unauthorized" {
+		t.Fatal("successful sibling erased the failed key's own backoff")
+	}
+	s.sampleUsage()
+	if got := host.pathCount(samplerLimitsPath); got != 2 {
+		t.Fatalf("fresh successful account was sampled again: %d requests", got)
+	}
+	ageSamplerCache(t, s, 2*usageTTL, "b-working")
+	s.sampleUsage()
+	got := host.pathRequests(samplerLimitsPath)
+	if len(got) != 3 || got[1].key != "working-key" || got[2].key != "working-key" {
+		t.Fatalf("working sibling did not retain sampling priority: %+v", got)
+	}
+}
+
+func TestUsageSamplerFailedAccountRotatesAndKeepsPerKeyBackoff(t *testing.T) {
+	host := newSamplerHost()
+	host.failures["first-key"], host.failures["second-key"] = http.StatusUnauthorized, http.StatusTooManyRequests
+	s := samplerService(t, host)
+	for _, c := range []Credential{samplerCredential("a-first", "first-key"), samplerCredential("b-second", "second-key")} {
+		c.QuotaIdentity = &QuotaIdentity{AccountHash: "known-account", KeyHash: quotaKeyHash(c)}
+		quotaTestAuth(t, s, c)
+	}
+	s.sampleUsage()
+	s.sampleUsage()
+	s.sampleUsage()
+	if got := host.pathCount(samplerLimitsPath); got != 2 {
+		t.Fatalf("failed keys were retried inside their own backoff: %d requests", got)
+	}
+	// Both are due, but the lexically later key has waited longer.
+	ageSamplerCache(t, s, 6*time.Minute, "a-first")
+	ageSamplerCache(t, s, 7*time.Minute, "b-second")
+	s.sampleUsage()
+	s.sampleUsage()
+	s.sampleUsage()
+	got := host.pathRequests(samplerLimitsPath)
+	if len(got) != 4 || got[0].key != "first-key" || got[1].key != "second-key" || got[2].key != "second-key" || got[3].key != "first-key" {
+		t.Fatalf("failed account did not rotate fairly or ignored per-key backoff: %+v", got)
+	}
+}
+
+func TestUsageSamplingTargetsChecksAllSiblingsAndCurrentKeys(t *testing.T) {
+	s := NewService()
+	old := time.Now().Add(-2 * usageTTL)
+	for _, id := range []string{"a-first", "b-second"} {
+		c := samplerCredential(id, id+"-key")
+		c.QuotaIdentity = &QuotaIdentity{AccountHash: "same-account", KeyHash: quotaKeyHash(c)}
+		s.creds[id] = c
+		s.usageCache[id] = &usageCacheEntry{fingerprint: usageFingerprint(c), value: credentialUsage{Status: "ok", CheckedAt: &old, accountHash: "same-account"}}
+	}
+	// The preferred first key is idle, but a manually refreshed sibling is busy.
+	s.usageCache["b-second"].done = make(chan struct{})
+	if targets := s.usageSamplingTargets(time.Now()); len(targets) != 0 {
+		t.Fatalf("scheduled an account with an ongoing sibling fetch: %v", targets)
+	}
+	// A key rotation invalidates both the old verified identity and its cache,
+	// including an ongoing fetch of the previous key.
+	c := s.creds["b-second"]
+	c.APIKey = "replacement-key"
+	s.creds[c.ID] = c
+	targets := s.usageSamplingTargets(time.Now())
+	if len(targets) != 2 || targets[0] != "a-first" || targets[1] != "b-second" {
+		t.Fatalf("replacement key inherited the previous key's identity or busy cache: %v", targets)
+	}
+}
+
 func TestUsageSamplerShutdownStopsLoopAndClosesRead(t *testing.T) {
 	host := newSamplerHost()
 	host.accounts["k1"] = "acct-a"
