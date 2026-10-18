@@ -31,12 +31,13 @@ func TestExecutorReasoningMaxReachesUpstreamAndLog(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if method == "executor.execute_stream" {
-				// Stream logs are appended before the fake host closes the client.
+				// Closing the stream precedes the final log write; join the worker.
 				select {
 				case <-h.clientClosed:
 				case <-time.After(3 * time.Second):
 					t.Fatal("plugin did not close client stream")
 				}
+				s.active.Wait()
 			}
 			if got := len(bodies); got != 1 {
 				t.Fatalf("upstream requests = %d, want 1", got)

@@ -191,7 +191,7 @@ func samplerLedger(s *Service, status string, ids ...string) func() bool {
 		defer s.mu.RUnlock()
 		for _, id := range ids {
 			entry := s.usageCache[id]
-			if entry == nil || entry.value.CheckedAt == nil || entry.value.Status != status {
+			if entry == nil || entry.done != nil || entry.value.CheckedAt == nil || entry.value.Status != status {
 				return false
 			}
 			if status == "ok" && (entry.value.accountHash == "" || len(entry.value.Limits) == 0) {

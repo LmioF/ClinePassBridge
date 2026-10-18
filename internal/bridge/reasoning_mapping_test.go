@@ -348,6 +348,7 @@ func TestReasoningMappingExecutorOutbound(t *testing.T) {
 					case <-time.After(3 * time.Second):
 						t.Fatal("client stream did not close")
 					}
+					s.active.Wait()
 				}
 				if len(bodies) != 1 {
 					t.Fatalf("outbound requests = %d, want 1", len(bodies))
