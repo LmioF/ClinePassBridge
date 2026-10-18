@@ -214,8 +214,8 @@ func TestRequestJournalRetriesAbsoluteBackoffUpdates(t *testing.T) {
 	for i := range 2 {
 		s.appendLog(LogEntry{ID: fmt.Sprintf("local-%d", i), CredentialID: "credential", Model: "alias", UpstreamModel: "upstream", Status: 429, UpstreamSkipped: true, BackoffWindowID: "window"})
 	}
-	if s.logWriteError == "" || len(s.logStore.pending) != 2 {
-		t.Fatal("failed journal writes were not retained for retry")
+	if s.logWriteError == "" || !s.logStore.needsSnapshot || len(s.logStore.pending) != 0 {
+		t.Fatal("failed journal writes did not switch to bounded snapshot recovery")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

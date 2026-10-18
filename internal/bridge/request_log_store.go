@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 const requestJournalName = "requests.journal.jsonl"
@@ -35,6 +36,8 @@ type requestLogStore struct {
 	journalEvents int
 	snapshotBytes int64
 	pending       []requestLogEvent
+	needsSnapshot bool // After a write failure, s.logs is the bounded recovery state.
+	retryAt       time.Time
 }
 
 func (s *Service) loadRequestLogsLocked() error {
@@ -137,6 +140,9 @@ func (s *Service) applyRequestLogEventLocked(event requestLogEvent) error {
 
 func (s *Service) queueRequestLogLocked(entry *LogEntry, merged bool) {
 	s.logStore.sequence++
+	if s.logStore.needsSnapshot {
+		return
+	}
 	event := requestLogEvent{Sequence: s.logStore.sequence, Retention: s.cfg.LogRetention, Merged: merged}
 	if entry != nil {
 		copy := *entry
@@ -148,14 +154,32 @@ func (s *Service) queueRequestLogLocked(entry *LogEntry, merged bool) {
 // Every completion writes its own line before returning; no in-memory batching.
 // Like the previous requests.json writer, ordinary appends do not call fsync.
 func (s *Service) flushRequestLogsLocked() {
-	err := s.writeRequestJournalLocked()
+	// Failed storage must not turn request traffic into an ever-growing queue
+	// or a full snapshot rewrite per request. Shutdown makes one final attempt.
+	if s.logStore.needsSnapshot && !s.stopped && time.Now().Before(s.logStore.retryAt) {
+		s.scheduleObservationsLocked()
+		return
+	}
+	var err error
+	if s.logStore.needsSnapshot {
+		err = s.compactRequestLogsLocked()
+	} else {
+		err = s.writeRequestJournalLocked()
+	}
 	if err == nil && (s.logStore.journalBytes >= 64<<20 ||
 		s.logStore.journalEvents >= 1024 && s.logStore.journalBytes >= s.logStore.snapshotBytes) {
 		err = s.compactRequestLogsLocked()
 	}
 	s.logWriteError = safeError(err)
 	if err != nil {
+		// The current retained rows include every pending absolute update. A
+		// checkpoint can safely replace failed/partial appends once IO recovers.
+		s.logStore.pending = nil
+		s.logStore.needsSnapshot = true
+		s.logStore.retryAt = time.Now().Add(2 * time.Second)
 		s.scheduleObservationsLocked()
+	} else {
+		s.logStore.retryAt = time.Time{}
 	}
 }
 
@@ -231,10 +255,16 @@ func (s *Service) compactRequestLogsLocked() error {
 			return err
 		}
 	}
-	if err = os.Truncate(filepath.Join(s.cfg.DataDir, requestJournalName), 0); err != nil {
+	// The first failed append may never have created a journal at all.
+	journal, err := os.OpenFile(filepath.Join(s.cfg.DataDir, requestJournalName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if err = journal.Close(); err != nil {
 		return err
 	}
 	s.logStore.journalBytes, s.logStore.journalEvents = 0, 0
 	s.logStore.snapshotBytes = int64(len(data))
+	s.logStore.pending, s.logStore.needsSnapshot = nil, false
 	return nil
 }
