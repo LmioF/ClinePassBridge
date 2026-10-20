@@ -138,15 +138,20 @@ func TestProviderAllowListIsInjectedAsOnlyAndOrder(t *testing.T) {
 }
 
 func TestModelWithClearedProvidersKeepsAutomaticRouting(t *testing.T) {
-	s, err := registerService(t, modelConfig(t, "    providers: []\n"))
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	body := upstreamBodyOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
-	for _, key := range []string{"provider", "providerOptions"} {
-		if _, ok := body[key]; ok {
-			t.Errorf("an unpinned model must not gain %s, body = %v", key, body)
-		}
+	for _, upstream := range []string{"cline-pass/deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash-1017"} {
+		t.Run(upstream, func(t *testing.T) {
+			config := strings.ReplaceAll(modelConfig(t, "    providers: []\n"), "cline-pass/deepseek-v4.1-flash", upstream)
+			s, err := registerService(t, config)
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			body := upstreamBodyOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+			for _, key := range []string{"provider", "providerOptions"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("an unpinned model must not gain %s, body = %v", key, body)
+				}
+			}
+		})
 	}
 }
 
@@ -292,13 +297,20 @@ func TestProviderConfigValidation(t *testing.T) {
 }
 
 func TestDeepSeekModelIsPinnedByDefault(t *testing.T) {
-	s, err := registerService(t, modelConfig(t, ""))
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
-	if got := strings.Join(slugs(gateway["only"]), ","); got != "deepseek" {
-		t.Errorf("a fresh DeepSeek mapping should default to deepseek, got %q", got)
+	for _, upstream := range []string{"cline-pass/deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash-1017"} {
+		t.Run(upstream, func(t *testing.T) {
+			config := strings.ReplaceAll(modelConfig(t, ""), "cline-pass/deepseek-v4.1-flash", upstream)
+			s, err := registerService(t, config)
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+			for _, key := range []string{"only", "order"} {
+				if got := strings.Join(slugs(gateway[key]), ","); got != "deepseek" {
+					t.Errorf("a fresh DeepSeek mapping should default %s to deepseek, got %q", key, got)
+				}
+			}
+		})
 	}
 }
 

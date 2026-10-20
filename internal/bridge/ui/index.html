@@ -63,19 +63,24 @@
     .release-bell { position: relative; flex: none; }
     .release-bell svg { width: 18px; height: 18px; }
     .release-bell[data-unread]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--surface); }
-    #releaseNoticeDialog { max-width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; }
+    #releaseNoticeDialog { max-width: min(640px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 32px)); padding: 0; overflow: hidden; }
     #releaseNoticeDialog[open] { display: flex; flex-direction: column; }
     .release-notice-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px 18px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
     .release-notice-head h2 { margin: 0 0 6px; font-size: 19px; }
-    .release-notice-body { padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+    .release-notice-body { min-height: 0; max-height: 480px; padding: 24px; overflow-y: scroll; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--accent) var(--inset-bg); }
+    .release-notice-body::-webkit-scrollbar { width: 8px; }
+    .release-notice-body::-webkit-scrollbar-track { background: var(--inset-bg); }
+    .release-notice-body::-webkit-scrollbar-thumb { background: var(--accent); border: 2px solid var(--inset-bg); border-radius: 8px; }
     .release-notice-item + .release-notice-item { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
     .release-notice-label { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
     .release-notice-number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
     .release-notice-item h3 { margin: 0 0 10px; font-size: 15px; line-height: 1.6; }
+    .release-notice-featured h3 { font-size: 18px; }
     #releaseNoticeDialog .release-notice-item p { font-size: 13px; line-height: 1.8; }
     .release-notice-item p + p { margin-top: 8px; }
     .release-notice-item strong { color: var(--ink); font-weight: 600; }
     .release-notice-item code { background: var(--code-bg); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+    #releaseNoticeDialog .release-notice-callout { margin-top: 14px; padding: 12px 14px; border-left: 3px solid var(--warn); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--warn) 8%, var(--surface)); color: var(--ink); }
     .release-notice-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--inset-bg); flex-shrink: 0; }
     .release-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     @media (max-width: 520px) {
@@ -726,16 +731,22 @@
       <div><h2 id="releaseNoticeTitle">公告</h2><span class="badge" id="releaseNoticeVersion">ClinePassBridge</span></div>
       <form method="dialog"><button class="button icon ghost" type="submit" aria-label="关闭公告" title="关闭"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
     </div>
-    <div class="release-notice-body">
+    <div class="release-notice-body" tabindex="0" role="region" aria-label="公告内容">
+      <section class="release-notice-item release-notice-featured" aria-labelledby="releaseNotice1017Title">
+        <div class="release-notice-label"><span class="release-notice-number">01</span><span class="badge good">新模型上线</span></div>
+        <h3 id="releaseNotice1017Title">DeepSeek V4.1 Flash 1017</h3>
+        <p>Cline 已在 ClinePass 中推出 <code>cline-pass/deepseek-v4.1-flash-1017</code> 模型。</p>
+        <p class="release-notice-callout">由于 1017 模型在 Cline 侧就与老模型使用不同的模型名，<strong>您需要自行添加模型映射，才能使用 1017 模型，请注意！</strong></p>
+      </section>
       <section class="release-notice-item" aria-labelledby="releaseNoticeIdleTitle">
-        <div class="release-notice-label"><span class="release-notice-number">01</span><span class="badge warn">强烈建议</span></div>
+        <div class="release-notice-label"><span class="release-notice-number">02</span><span class="badge warn">强烈建议</span></div>
         <h3 id="releaseNoticeIdleTitle">关闭「流式卡住时提前截流」</h3>
         <p>此功能有小概率导致提前截流，出现 <strong>502 错误</strong>，目前强烈建议关闭。</p>
         <p>它原本是为前几天频繁出现的 Cline 流式卡住问题设计的。目前 Cline 那边已无此问题，就没有必要继续开启。</p>
         <p>此功能上线时默认开启，<strong>老用户需要手动关闭并保存</strong>。目前版本已改为默认关闭，升级会保留已有设置。</p>
       </section>
       <section class="release-notice-item" aria-labelledby="releaseNoticeLimitTitle">
-        <div class="release-notice-label"><span class="release-notice-number">02</span><span class="badge">默认值调整 · 16 → 64 MiB</span></div>
+        <div class="release-notice-label"><span class="release-notice-number">03</span><span class="badge">默认值调整 · 16 → 64 MiB</span></div>
         <h3 id="releaseNoticeLimitTitle">调高最大响应大小，减少长输出截断</h3>
         <p>此前插件内置的 <code>max_response_bytes</code> 默认值为 <strong>16 MiB</strong>。这一上限偏小，长思维链可能在输出后期超过限制，出现 <strong>413 错误并截断</strong>。</p>
         <p>目前默认值已提高至 <strong>64 MiB</strong>。请老用户更新后前往「配置概览 → 请求与日志设置」，将「最大响应大小」调整为 <strong>64 MiB</strong> 并保存。</p>

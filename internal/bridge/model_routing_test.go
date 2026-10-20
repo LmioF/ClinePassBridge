@@ -21,8 +21,33 @@ func TestModelExecutorRequiresAccountSelection(t *testing.T) {
 	}
 }
 
+func TestFreshInstallHasDefault1017Model(t *testing.T) {
+	s := NewService()
+	raw := jsonBytes(map[string]any{"config_yaml": []byte(fmt.Sprintf("data_dir: %q\n", filepath.ToSlash(t.TempDir())))})
+	for _, method := range []string{"plugin.register", "plugin.reconfigure"} {
+		if _, err := s.Handle(method, raw); err != nil {
+			t.Fatal(err)
+		}
+		models := s.config().Models
+		if len(models) != 1 || models[0].ID != "deepseek-v4.1-flash-1017" || models[0].UpstreamID != "cline-pass/deepseek-v4.1-flash-1017" || len(models[0].Providers) != 1 || models[0].Providers[0] != "deepseek" {
+			t.Fatalf("%s lost the initial 1017 mapping or its provider: %#v", method, models)
+		}
+		result, err := s.Handle("model.for_auth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		registered := result.(map[string]any)["Models"].([]map[string]any)
+		if len(registered) != 1 || registered[0]["ID"] != models[0].ID {
+			t.Fatalf("default model was not registered for accounts: %#v", registered)
+		}
+		if got, err := s.resolveModel(models[0].ID); err != nil || got != models[0].UpstreamID {
+			t.Fatalf("default model resolved to %q: %v", got, err)
+		}
+	}
+}
+
 func TestUnconfiguredModelsStayDisabled(t *testing.T) {
-	for _, modelsYAML := range []string{"", "models: []\n", "models: null\n"} {
+	for _, modelsYAML := range []string{"models: []\n", "models: null\n"} {
 		t.Run(fmt.Sprintf("config=%q", modelsYAML), func(t *testing.T) {
 			s := NewService()
 			raw := jsonBytes(map[string]any{"config_yaml": []byte(fmt.Sprintf("data_dir: %q\n%s", filepath.ToSlash(t.TempDir()), modelsYAML))})
@@ -36,7 +61,7 @@ func TestUnconfiguredModelsStayDisabled(t *testing.T) {
 						t.Fatalf("unconfigured models registered: %v, %v", result, err)
 					}
 				}
-				for _, model := range []string{"deepseek-flash", "deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash"} {
+				for _, model := range []string{"deepseek-flash", "deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"} {
 					if _, err := s.resolveModel(model); statusOf(err) != 400 {
 						t.Fatalf("unconfigured model %q accepted: %v", model, err)
 					}
@@ -90,7 +115,7 @@ func TestOnlyConfiguredClientNamesRouteAndPersist(t *testing.T) {
 					t.Fatalf("explicit mapping %q resolved to %q: %v", model.ID, got, err)
 				}
 			}
-			denied := []string{"deepseek-flash", "deepseek-v4.1-flash", "yaml-alias", "cline-pass/another-model"}
+			denied := []string{"deepseek-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "yaml-alias", "cline-pass/another-model"}
 			if len(selected) == 0 {
 				denied = append(denied, "my-alias", "cline-pass/deepseek-v4.1-flash")
 			}
