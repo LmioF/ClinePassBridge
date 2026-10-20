@@ -53,17 +53,14 @@ func (s *Service) prepareWithCredential(r ExecutorRequest, c Credential) (map[st
 	return j, c, up, nil
 }
 
-// applyProviderRouting writes the per-model provider allow-list into the
-// outgoing body. Cline forwards providerOptions.gateway to Vercel AI Gateway
-// untouched, which makes the list an allow-list (`only`) with a priority order
-// (`order`) there. Models without a configured list keep the automatic routing
-// they had before this existed.
+// applyProviderRouting resolves provider preferences once, then writes the
+// allow-list (`only`) and priority order (`order`) to both routing forms: some
+// upstream request paths read provider, while others read providerOptions.gateway.
 func (s *Service) applyProviderRouting(j map[string]any, alias string) {
 	cfg := s.config()
 	pinned := cfg.pinnedProviders(alias)
-	// Chat Completions accepts a top-level provider shorthand for the same
-	// fields. Fold it into providerOptions.gateway so there is one channel to
-	// reason about, and so the copy below cannot disagree with itself.
+	// Merge caller hints before applying the configured policy. Gateway fields
+	// take precedence over the top-level shorthand when both are present.
 	gateway := map[string]any{}
 	for k, v := range object(object(j["providerOptions"])["gateway"]) {
 		gateway[k] = v
@@ -99,6 +96,18 @@ func (s *Service) applyProviderRouting(j map[string]any, alias string) {
 			j["providerOptions"] = opts
 		}
 		return
+	}
+	// Rebuild the top-level form from the resolved routing fields so caller
+	// hints cannot bypass the policy. Gateway-specific options such as sort
+	// must not be copied into this form.
+	provider := map[string]any{}
+	for _, key := range []string{"only", "order"} {
+		if value, ok := gateway[key]; ok {
+			provider[key] = value
+		}
+	}
+	if len(provider) > 0 {
+		j["provider"] = provider
 	}
 	if opts == nil {
 		opts = map[string]any{}

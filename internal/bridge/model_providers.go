@@ -66,6 +66,7 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	// the model's own pin: a request pinned to one provider reports no
 	// alternatives, which would make an already-pinned model look unpinnable.
 	if err == nil {
+		delete(j, "provider")
 		delete(j, "providerOptions")
 	}
 	entry := s.newLog(req, credential, upstream)

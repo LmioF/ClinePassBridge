@@ -81,9 +81,8 @@ func requestForModel(model, payload string) json.RawMessage {
 	})
 }
 
-// gatewayOf runs one request through a capturing host and returns the
-// providerOptions.gateway the plugin actually sent upstream.
-func gatewayOf(t *testing.T, s *Service, payload string) map[string]any {
+// upstreamBodyOf returns the request body actually sent by the executor.
+func upstreamBodyOf(t *testing.T, s *Service, payload string) map[string]any {
 	t.Helper()
 	host := &capturingHost{plan: ssePlan(simpleSSE())}
 	s.SetHost(host.call)
@@ -95,7 +94,25 @@ func gatewayOf(t *testing.T, s *Service, payload string) map[string]any {
 	if len(host.bodies) != 1 {
 		t.Fatalf("expected 1 upstream body, got %d", len(host.bodies))
 	}
-	return object(object(host.bodies[0]["providerOptions"])["gateway"])
+	return host.bodies[0]
+}
+
+// gatewayOf also checks that upstreams reading only the top-level provider
+// receive the same routing fields, without copying gateway-only options.
+func gatewayOf(t *testing.T, s *Service, payload string) map[string]any {
+	t.Helper()
+	body := upstreamBodyOf(t, s, payload)
+	gateway := object(object(body["providerOptions"])["gateway"])
+	wantProvider := map[string]any{}
+	for _, key := range []string{"only", "order"} {
+		if value, ok := gateway[key]; ok {
+			wantProvider[key] = value
+		}
+	}
+	if got := object(body["provider"]); string(jsonBytes(got)) != string(jsonBytes(wantProvider)) {
+		t.Errorf("provider = %s, want only the resolved routing fields %s", jsonBytes(got), jsonBytes(wantProvider))
+	}
+	return gateway
 }
 
 func slugs(v any) []string {
@@ -125,15 +142,11 @@ func TestModelWithClearedProvidersKeepsAutomaticRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	host := &capturingHost{plan: ssePlan(simpleSSE())}
-	s.SetHost(host.call)
-	if _, err := s.Handle("executor.execute", requestWithPayload(`{"messages":[{"role":"user","content":"hello"}]}`)); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	host.mu.Lock()
-	defer host.mu.Unlock()
-	if _, ok := host.bodies[0]["providerOptions"]; ok {
-		t.Errorf("an unpinned model must not gain providerOptions, body = %v", host.bodies[0])
+	body := upstreamBodyOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+	for _, key := range []string{"provider", "providerOptions"} {
+		if _, ok := body[key]; ok {
+			t.Errorf("an unpinned model must not gain %s, body = %v", key, body)
+		}
 	}
 }
 
@@ -153,24 +166,48 @@ func TestClientProviderOverridesConfiguredSetKeyByKey(t *testing.T) {
 	}
 }
 
-func TestTopLevelProviderShorthandFoldsIntoGateway(t *testing.T) {
-	s, err := registerService(t, modelConfig(t, "provider_policy: client\n"))
+func TestTopLevelProviderShorthandIsMirroredIntoGateway(t *testing.T) {
+	s, err := registerService(t, modelConfig(t, "    providers: []\nprovider_policy: client\n"))
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	host := &capturingHost{plan: ssePlan(simpleSSE())}
-	s.SetHost(host.call)
-	if _, err := s.Handle("executor.execute", requestWithPayload(`{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"]}}`)); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	host.mu.Lock()
-	defer host.mu.Unlock()
-	if _, ok := host.bodies[0]["provider"]; ok {
-		t.Errorf("the top-level shorthand must be folded away, body = %v", host.bodies[0])
-	}
-	gateway := object(object(host.bodies[0]["providerOptions"])["gateway"])
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"sort":"latency"}}`)
 	if got := strings.Join(slugs(gateway["only"]), ","); got != "novita" {
 		t.Errorf("only = %q, want novita", got)
+	}
+	if _, ok := gateway["order"]; ok {
+		t.Errorf("order must remain absent without a configured fallback, gateway = %v", gateway)
+	}
+	if gateway["sort"] != "latency" {
+		t.Errorf("gateway sort = %v, want latency", gateway["sort"])
+	}
+}
+
+func TestClientProviderRoutingMergesGatewayAndTopLevelFields(t *testing.T) {
+	s, err := registerService(t, modelConfig(t, "    providers: [deepseek, wafer]\nprovider_policy: client\n"))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["baseten"],"sort":"latency"},"providerOptions":{"gateway":{"only":["alibaba"],"sort":"price","allowFallbacks":false}}}`)
+	if got := strings.Join(slugs(gateway["only"]), ","); got != "alibaba" {
+		t.Errorf("only = %q, want gateway value alibaba", got)
+	}
+	if got := strings.Join(slugs(gateway["order"]), ","); got != "baseten" {
+		t.Errorf("order = %q, want top-level value baseten", got)
+	}
+	if gateway["sort"] != "price" || gateway["allowFallbacks"] != false {
+		t.Errorf("gateway-only options changed: %v", gateway)
+	}
+}
+
+func TestClientProviderRoutingPreservesExplicitEmptyFields(t *testing.T) {
+	s, err := registerService(t, modelConfig(t, "    providers: [deepseek, wafer]\nprovider_policy: client\n"))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["novita"]},"providerOptions":{"gateway":{"only":[],"order":null}}}`)
+	if got := string(jsonBytes(gateway)); got != `{"only":[],"order":null}` {
+		t.Errorf("gateway = %s, want explicit empty fields instead of fallback values", got)
 	}
 }
 
@@ -180,7 +217,7 @@ func TestConfigPolicyIgnoresClientOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"providerOptions":{"gateway":{"only":["alibaba"]}}}`)
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["baseten"]},"providerOptions":{"gateway":{"only":["alibaba"],"order":["alibaba"]}}}`)
 	if got := strings.Join(slugs(gateway["only"]), ","); got != "deepseek" {
 		t.Errorf("only = %q, want the configured deepseek", got)
 	}
@@ -194,15 +231,16 @@ func TestConfigPolicyDropsHintForClearedModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	host := &capturingHost{plan: ssePlan(simpleSSE())}
-	s.SetHost(host.call)
-	if _, err := s.Handle("executor.execute", requestWithPayload(`{"messages":[{"role":"user","content":"hello"}],"providerOptions":{"gateway":{"only":["alibaba"]}}}`)); err != nil {
-		t.Fatalf("execute: %v", err)
+	body := upstreamBodyOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["baseten"]},"providerOptions":{"gateway":{"only":["alibaba"],"order":["alibaba"]},"anthropic":{"thinking":{"type":"enabled","budgetTokens":2048}},"deepseek":{"reasoningEffort":"max"}}}`)
+	if _, ok := body["provider"]; ok {
+		t.Errorf("cleared config must remove top-level routing, body = %v", body)
 	}
-	host.mu.Lock()
-	defer host.mu.Unlock()
-	if _, ok := host.bodies[0]["providerOptions"]; ok {
-		t.Errorf("an unpinned model must not gain providerOptions under config policy, body = %v", host.bodies[0])
+	opts := object(body["providerOptions"])
+	if _, ok := opts["gateway"]; ok {
+		t.Errorf("cleared config must remove client gateway routing, options = %v", opts)
+	}
+	if got := string(jsonBytes(opts)); got != `{"anthropic":{"thinking":{"budgetTokens":2048,"type":"enabled"}},"deepseek":{"reasoningEffort":"max"}}` {
+		t.Errorf("other provider options changed: %s", got)
 	}
 }
 
