@@ -226,7 +226,9 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		}
 		return s.execute(r)
 	case "executor.count_tokens":
-		return nil, fail(501, "Cline Pass does not expose an exact token counting endpoint")
+		// Stock CPA treats a missing count endpoint as availability-neutral;
+		// 501 would cool down an otherwise usable credential/model.
+		return nil, fail(404, "Cline Pass does not expose an exact token counting endpoint")
 	case "executor.http_request":
 		return nil, fail(400, "Use the ClinePassBridge model executor")
 	case "management.register":
