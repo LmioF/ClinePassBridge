@@ -288,7 +288,7 @@ func (s *Service) readJSON(up upstreamStream) ([]byte, error) {
 	e := s.read(up, func(v []byte) error { b.Write(v); return nil })
 	if up.StatusCode < 200 || up.StatusCode >= 300 {
 		j, _ := decodeObject(b.Bytes())
-		err := classifyUpstreamError(up.StatusCode, up.Headers, j, time.Now())
+		err := classifyUpstreamResponseError(up.StatusCode, up.Headers, j, b.Bytes(), time.Now())
 		return nil, s.classifyEgressError(up, j, b.Bytes(), err)
 	}
 	if e != nil {
@@ -315,7 +315,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 		entry.DurationMS = time.Since(start).Milliseconds()
 		entry.Status = statusOf(e)
 		entry.Error = safeError(e)
-		logErrorDetails(&entry, nil, e)
+		s.logErrorDetails(&entry, nil, e)
 		s.appendLog(entry)
 	}()
 	if e != nil {
@@ -353,7 +353,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 					var o map[string]any
 					root, _ := decodeObject(raw)
 					if root["error"] != nil || root["success"] == false {
-						e = classifyUpstreamError(us.StatusCode, us.Headers, root, time.Now(), 500)
+						e = classifyUpstreamResponseError(us.StatusCode, us.Headers, root, raw, time.Now(), 500)
 					} else {
 						o, e = unwrap(raw)
 					}
@@ -367,7 +367,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 		}
 		attempt.Status = statusOf(e)
 		attempt.Error = safeError(e)
-		logErrorDetails(&entry, &attempt, e)
+		s.logErrorDetails(&entry, &attempt, e)
 		attempt.DurationMS = time.Since(t).Milliseconds()
 		entry.Attempts = append(entry.Attempts, attempt)
 		if e == nil {
@@ -438,7 +438,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 				if d := watchdog.streamDiagnostics(); d != nil {
 					d.observeFrame("error")
 				}
-				err := classifyUpstreamError(us.StatusCode, us.Headers, j, time.Now())
+				err := classifyUpstreamResponseError(us.StatusCode, us.Headers, j, payload, time.Now())
 				return s.classifyEgressError(us, j, payload, err)
 			}
 			observeMetadata(j, entry, attempt)
@@ -515,7 +515,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		entry.Error = safeError(err)
 		entry.DurationMS = time.Since(start).Milliseconds()
 		attempt := Attempt{Status: entry.Status, Error: entry.Error, Mode: "stream", Provider: "unknown", DurationMS: entry.DurationMS}
-		logErrorDetails(&entry, &attempt, err)
+		s.logErrorDetails(&entry, &attempt, err)
 		entry.Attempts = append(entry.Attempts, attempt)
 		if upstreamOpened {
 			s.closeOutputStream(r.StreamID, &entry, err)
@@ -578,14 +578,14 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			_ = s.observeQuotaError(c, err)
 			attempt.Status = statusOf(err)
 			attempt.Error = safeError(err)
-			logErrorDetails(&entry, &attempt, err)
+			s.logErrorDetails(&entry, &attempt, err)
 			attempt.DurationMS = time.Since(start).Milliseconds()
 			entry.Attempts = append(entry.Attempts, attempt)
 			entry.Status = attempt.Status
 			entry.Error = attempt.Error
 			entry.DurationMS = attempt.DurationMS
 			finishRequestRateLease(lease, err)
-			recordOutputStreamClose(&entry, err, output.supported)
+			recordOutputStreamClose(&entry, err, output.supported, s.hostFaultPolicy(err))
 			s.appendLog(entry)
 			if !started {
 				ready <- err

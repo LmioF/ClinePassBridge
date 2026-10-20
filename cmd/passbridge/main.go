@@ -160,7 +160,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	response.len = 0
 	defer func() {
 		if recover() != nil {
-			writeResponse(response, failure(&rpcError{ErrorCode: "plugin_panic", Message: "plugin callback panicked", HTTPStatus: http.StatusInternalServerError}))
+			writeResponse(response, failure(errorDetails(&rpcError{ErrorCode: "plugin_panic", Message: "plugin callback panicked", HTTPStatus: http.StatusInternalServerError})))
 			rc = 1
 		}
 	}()
@@ -181,7 +181,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		}
 	}
 	if service == nil {
-		writeResponse(response, failure(&rpcError{ErrorCode: "plugin_stopped", Message: "plugin is not initialized", HTTPStatus: http.StatusServiceUnavailable}))
+		writeResponse(response, failure(errorDetails(&rpcError{ErrorCode: "plugin_stopped", Message: "plugin is not initialized", HTTPStatus: http.StatusServiceUnavailable})))
 		return 1
 	}
 	result, err := service.Handle(C.GoString(method), raw)
@@ -191,7 +191,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	}
 	encoded, err := success(result)
 	if err != nil {
-		writeResponse(response, failure(&rpcError{ErrorCode: "serialization_error", Message: "plugin response cannot be encoded", HTTPStatus: http.StatusInternalServerError}))
+		writeResponse(response, failure(errorDetails(&rpcError{ErrorCode: "serialization_error", Message: "plugin response cannot be encoded", HTTPStatus: http.StatusInternalServerError})))
 		return 1
 	}
 	writeResponse(response, encoded)

@@ -53,22 +53,21 @@ func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error)
 	if streamID == "" {
 		return
 	}
-	recordOutputStreamClose(entry, err, s.sendOutputStreamClose(streamID, entry.ErrorPhase, err))
+	recordOutputStreamClose(entry, err, s.sendOutputStreamClose(streamID, entry.ErrorPhase, err), s.hostFaultPolicy(err))
 }
 
 func (s *Service) sendOutputStreamClose(streamID, phase string, err error) bool {
-	message, _ := s.HostErrorDetails(err)
+	message, _ := s.hostErrorDetails(err, true)
 	payload := map[string]any{"stream_id": streamID, "error": message}
 	if err != nil {
-		details := streamErrorDetails{HTTPStatus: statusOf(err), Code: "upstream_error", Phase: phase}
+		policy := s.hostFaultPolicy(err)
+		details := streamErrorDetails{HTTPStatus: statusOf(err), Code: "upstream_error", Phase: phase, Scope: policy.Scope, RequestScoped: !policy.Cooldown}
 		var coded interface{ Code() string }
 		if errors.As(err, &coded) && coded.Code() != "" {
 			details.Code = coded.Code()
 		}
 		var upstream *upstreamError
 		if errors.As(err, &upstream) {
-			details.Scope = upstream.Scope
-			details.RequestScoped = upstream.IsRequestScoped()
 			if !upstream.RetryAt.IsZero() {
 				at := upstream.RetryAt.UTC()
 				details.RetryAt = &at
@@ -81,7 +80,7 @@ func (s *Service) sendOutputStreamClose(streamID, phase string, err error) bool 
 	return closeErr == nil && response.ErrorDetailsSupported
 }
 
-func recordOutputStreamClose(entry *LogEntry, err error, supported bool) {
+func recordOutputStreamClose(entry *LogEntry, err error, supported bool, policies ...faultPolicy) {
 	entry.StreamErrorDetailsSupported = new(bool)
 	*entry.StreamErrorDetailsSupported = supported
 	if err != nil {
@@ -89,8 +88,11 @@ func recordOutputStreamClose(entry *LogEntry, err error, supported bool) {
 			entry.CooldownDisposition = "legacy_host_unknown"
 		} else {
 			entry.CooldownDisposition = "host_policy"
-			var upstream *upstreamError
-			if errors.As(err, &upstream) && upstream.IsRequestScoped() {
+			policy := faultPolicyFor(err)
+			if len(policies) > 0 {
+				policy = policies[0]
+			}
+			if !policy.Cooldown {
 				entry.CooldownDisposition = "exempt"
 			}
 		}
@@ -101,8 +103,7 @@ func recordOutputStreamClose(entry *LogEntry, err error, supported bool) {
 // not add the ordinary failed-probe five-second retreat. Retain any existing
 // window, release its probe slot, and leave its original deadline unchanged.
 func finishRequestRateLease(lease *rateLease, err error) {
-	var upstream *upstreamError
-	if lease == nil || !errors.As(err, &upstream) || !upstream.IsRequestScoped() {
+	if lease == nil || err == nil || faultPolicyFor(err).Cooldown {
 		lease.finish(err)
 		return
 	}

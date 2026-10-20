@@ -109,7 +109,7 @@ func TestErrorPolicyProtectedStatusAndScopePrecedence(t *testing.T) {
 		})
 	}
 	for _, kind := range []string{transportIncompleteKind, upstreamStreamIdleTimeoutKind, upstreamServiceKind, upstreamProtocolKind, upstreamCallbackKind, upstreamNetworkKind, responseLimitKind, bridgeUnavailableKind, requestCanceledKind, requestDeadlineKind} {
-		for _, scope := range []string{"", "account", "credential_model", "upstream_team"} {
+		for _, scope := range []string{"account", "credential_model", "upstream_team"} {
 			upstream := &upstreamError{APIError: &APIError{Status: 502, Kind: kind, Message: "scope fixture"}, Scope: scope}
 			if upstream.IsRequestScoped() {
 				t.Fatalf("kind=%s scope=%s acquired request exemption", kind, scope)
@@ -128,6 +128,7 @@ func TestErrorPolicyProtectedWireIsolatesTransportText(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		s := NewService()
 		s.cfg.ClientRetryCompatibility = enabled
+		s.errorRules = nil // Exercise baseline protections without an explicit rule override.
 		for _, marker := range []string{"unexpected EOF", "i/o timeout", "connection reset", "server misbehaving", "http2: client connection force closed via ClientConn.Close", "http2: client conn is closed"} {
 			for _, tc := range []struct {
 				name    string

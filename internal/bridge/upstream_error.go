@@ -47,19 +47,7 @@ type upstreamError struct {
 }
 
 func (e *upstreamError) IsRequestScoped() bool {
-	if e == nil || e.Status == 401 || e.Status == 402 || e.Status == 403 || e.Status == 429 {
-		return false
-	}
-	if e.Scope != "request" {
-		return false
-	}
-	switch e.Kind {
-	case transportIncompleteKind, upstreamNetworkKind, requestCanceledKind, requestDeadlineKind, upstreamStreamIdleTimeoutKind,
-		upstreamServiceKind, upstreamProtocolKind, upstreamCallbackKind, responseLimitKind, bridgeUnavailableKind:
-		return true
-	default:
-		return false
-	}
+	return e != nil && !faultPolicyFor(e).Cooldown
 }
 
 // Only the provider APIConnectionError with an explicit truncated-response
@@ -112,7 +100,7 @@ func routingFacts(body map[string]any) (string, string) {
 func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]any, now time.Time, fallback ...int) error {
 	message := errorMessage(body)
 	detail := object(body["error"])
-	code := strings.ToLower(str(detail["code"]) + " " + str(detail["type"]) + " " + str(body["code"]))
+	code := strings.Join(upstreamErrorCodes(body), " ")
 	lower := strings.ToLower(message)
 	status := httpStatus
 	if status < 400 || status > 599 {
@@ -148,9 +136,9 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 	if status >= 500 && status <= 599 {
 		for _, value := range []any{detail["code"], detail["type"], body["code"], body["type"]} {
 			switch strings.ToLower(str(value)) {
-			case "authentication_error", "invalid_api_key":
+			case "authentication_error", "invalid_api_key", "invalid_grant", "invalid_token", "expired_token", "token_expired", "invalid_client", "unauthorized", "unauthorized_client", "account_deactivated", "account_disabled", "account_suspended":
 				status = 401
-			case "permission_error", "permission_denied", "insufficient_permissions":
+			case "permission_error", "permission_denied", "insufficient_permissions", "access_denied":
 				status = 403
 			case "rate_limit_error", "rate_limit_exceeded":
 				status = 429
@@ -187,9 +175,15 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 		result.QuotaResetAt = quotaResetTime(headers, message, now)
 	case status == 401 || status == 403:
 		kind = "upstream_auth_error"
+	case status != 402 && isUpstreamCredentialError(body):
+		kind, result.Scope = "upstream_auth_error", "account"
+	case status != 402 && isUpstreamModelError(body):
+		kind, result.Scope = upstreamModelKind, "credential_model"
 	case status != 402 && isProviderTransportIncomplete(body):
 		status, result.UpstreamStatus, kind = 502, 502, transportIncompleteKind
 		result.Scope = "request"
+	case status != 402 && isUpstreamRequestError(status, body):
+		kind, result.Scope = upstreamRequestKind, "request"
 	case status >= 500 && status <= 599:
 		kind, result.Scope = upstreamServiceKind, "request"
 	}
@@ -244,8 +238,7 @@ func logErrorDetails(entry *LogEntry, attempt *Attempt, err error) {
 			entry.ErrorPhase = "after_output"
 		}
 		entry.CooldownDisposition = "host_policy"
-		var scoped *upstreamError
-		if errors.As(err, &scoped) && scoped.IsRequestScoped() {
+		if !faultPolicyFor(err).Cooldown {
 			entry.CooldownDisposition = "legacy_host_unknown"
 			if entry.StreamErrorDetailsSupported != nil && *entry.StreamErrorDetailsSupported {
 				entry.CooldownDisposition = "exempt"
@@ -298,6 +291,20 @@ func logErrorDetails(entry *LogEntry, attempt *Attempt, err error) {
 		attempt.UpstreamSkipped = entry.UpstreamSkipped
 		if provider != "" && (attempt.Provider == "" || attempt.Provider == "unknown") {
 			attempt.Provider, attempt.ProviderSource = provider, source
+		}
+	}
+}
+
+func (s *Service) logErrorDetails(entry *LogEntry, attempt *Attempt, err error) {
+	logErrorDetails(entry, attempt, err)
+	if err == nil {
+		return
+	}
+	entry.CooldownDisposition = "host_policy"
+	if !s.hostFaultPolicy(err).Cooldown {
+		entry.CooldownDisposition = "legacy_host_unknown"
+		if entry.StreamErrorDetailsSupported != nil && *entry.StreamErrorDetailsSupported {
+			entry.CooldownDisposition = "exempt"
 		}
 	}
 }

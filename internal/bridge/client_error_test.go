@@ -70,7 +70,7 @@ func TestStreamCooldownMarkersPreserveOtherFaults(t *testing.T) {
 	s.SetHost(h.call)
 	for _, enabled := range []bool{false, true} {
 		s.cfg.ClientRetryCompatibility = enabled
-		for _, status := range []int{400, 401, 402, 403, 429} {
+		for _, status := range []int{401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": "original upstream error"}, time.Now())
 			s.closeOutputStream("client-stream", &LogEntry{}, err)
 			if h.clientError != safeError(err) {
@@ -114,7 +114,7 @@ func TestHostErrorDetailsAvoidsCooldownBeforeStreamHandoff(t *testing.T) {
 				t.Fatal("wire compatibility changed diagnostic status")
 			}
 		}
-		for _, status := range []int{400, 401, 402, 403, 429} {
+		for _, status := range []int{401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": "ordinary upstream error"}, time.Now())
 			message, gotStatus := s.HostErrorDetails(err)
 			if gotStatus != status || message != safeError(err) {
@@ -124,8 +124,8 @@ func TestHostErrorDetailsAvoidsCooldownBeforeStreamHandoff(t *testing.T) {
 		for _, status := range []int{502, 504} {
 			err := fail(status, "unclassified local failure")
 			message, gotStatus := s.HostErrorDetails(err)
-			if gotStatus != status || message != safeError(err) {
-				t.Fatalf("unclassified fault acquired exemption: status=%d message=%q", gotStatus, message)
+			if gotStatus != 0 || !strings.Contains(message, "[clinepassbridge:cpa_compat:server misbehaving]") {
+				t.Fatalf("unclassified fault missed default exemption: status=%d message=%q", gotStatus, message)
 			}
 		}
 	}

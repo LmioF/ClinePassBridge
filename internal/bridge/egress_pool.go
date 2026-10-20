@@ -172,7 +172,7 @@ func (p *egressManager) acquire(ctx context.Context, pin string) (*egressLease, 
 		p.mu.Lock()
 		if p.closed {
 			p.mu.Unlock()
-			return nil, fail(503, "egress transport is closing")
+			return nil, bridgeUnavailable("egress transport is closing")
 		}
 		if err := ctx.Err(); err != nil {
 			p.mu.Unlock()
@@ -285,7 +285,7 @@ func (p *egressManager) operation(callback string, deadline time.Time) (*egressO
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return nil, fail(503, "egress transport is closing")
+		return nil, bridgeUnavailable("egress transport is closing")
 	}
 	parent := context.Background()
 	if binding := p.bindings[callback]; binding != nil {

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -147,7 +149,7 @@ func (s *Service) openEgress(payload any, deadline time.Time, diagnostics ...*mo
 	if client == nil {
 		lease.release()
 		p.finishOperation(op)
-		return upstreamStream{}, true, fail(503, "egress transport is closing")
+		return upstreamStream{}, true, bridgeUnavailable("egress transport is closing")
 	}
 	p.mu.Lock()
 	lease.sent = true
@@ -167,7 +169,7 @@ func (s *Service) openEgress(payload any, deadline time.Time, diagnostics ...*mo
 	local := &egressLocalStream{id: "egress:" + id(), pool: p, op: op, lease: lease, body: response.Body}
 	p.mu.Lock()
 	if p.closed || op.ctx.Err() != nil {
-		failure := error(fail(503, "egress transport closed while opening a response"))
+		failure := bridgeUnavailable("egress transport closed while opening a response")
 		if !p.closed && op.ctx.Err() != nil {
 			failure = egressContextError(op.ctx)
 		}
@@ -185,7 +187,7 @@ func (s *Service) openEgress(payload any, deadline time.Time, diagnostics ...*mo
 	s.mu.Unlock()
 	if stopped {
 		local.close()
-		return upstreamStream{}, true, fail(503, "egress transport is closing")
+		return upstreamStream{}, true, bridgeUnavailable("egress transport is closing")
 	}
 	go func() {
 		<-op.ctx.Done()
@@ -215,15 +217,29 @@ func (s *Service) closeEgressStream(streamID string) bool {
 	return true
 }
 
-// Only clear HTML edge responses or explicit IP/edge codes open an IP window.
+// Only classified challenges, HTML 429s or explicit IP/edge codes open an IP window.
 // Generic JSON 429s (including monthly/weekly quota) keep their original kind.
 func (s *Service) classifyEgressError(up upstreamStream, body map[string]any, raw []byte, original error) error {
-	if up.local == nil {
+	if up.local == nil || up.local.pool == nil || up.local.lease == nil || up.local.lease.group == nil {
 		return original
 	}
 	var detail *upstreamError
 	if errors.As(original, &detail) && (detail.Kind == "upstream_quota_exhausted" || detail.Kind == "upstream_team_rate_limited" || detail.Kind == "upstream_auth_error") {
 		return original
+	}
+	if detail != nil && detail.Kind == upstreamEdgeKind {
+		p := up.local.pool
+		p.mu.Lock()
+		now := p.now()
+		delay := time.Duration(p.cfg.IPCooldownSeconds) * time.Second
+		if retryDelay, ok := egressRetryAfterDelay(up.Headers, now); ok {
+			delay = retryDelay
+		}
+		until := p.cooldownGroupLocked(up.local.lease.group, now.Add(delay))
+		p.mu.Unlock()
+		result := *detail
+		result.RetryAt = until
+		return &result
 	}
 	code := strings.ToLower(str(object(body["error"])["code"]) + " " + str(body["code"]))
 	text := strings.ToLower(strings.TrimSpace(string(raw)))
@@ -239,11 +255,27 @@ func (s *Service) classifyEgressError(up upstreamStream, body map[string]any, ra
 	if up.Headers.Get("Retry-After") != "" || retrySecondsPattern.MatchString(errorMessage(body)) {
 		delay = upstreamRetryDelay(up.Headers, errorMessage(body), now)
 	}
-	until := now.Add(delay)
-	g := up.local.lease.group
-	g.cooldown = laterTime(g.cooldown, until)
-	until = g.cooldown
-	p.notifyLocked()
+	until := p.cooldownGroupLocked(up.local.lease.group, now.Add(delay))
 	p.mu.Unlock()
 	return &upstreamError{APIError: &APIError{429, "upstream_ip_rate_limited", "[clinepassbridge:ip_rate_limit] Upstream edge/IP rate limit"}, HTTPStatus: up.StatusCode, UpstreamStatus: 429, Scope: "egress_ip", RetryAt: until}
+}
+
+func (p *egressManager) cooldownGroupLocked(group *egressGroup, until time.Time) time.Time {
+	group.cooldown = laterTime(group.cooldown, until)
+	p.notifyLocked()
+	return group.cooldown
+}
+
+// Challenge pages have no provider retry message. Ignore invalid Retry-After
+// values so the configured IP cooldown, rather than a generic minute, applies.
+func egressRetryAfterDelay(headers http.Header, now time.Time) (time.Duration, bool) {
+	value := strings.TrimSpace(headers.Get("Retry-After"))
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err == nil && !math.IsNaN(seconds) && !math.IsInf(seconds, 0) && seconds >= 0 && seconds <= 86400 {
+		return max(time.Second, time.Duration(math.Ceil(seconds))*time.Second), true
+	}
+	if date, err := http.ParseTime(value); err == nil && date.After(now) && date.Sub(now) <= 24*time.Hour {
+		return date.Sub(now), true
+	}
+	return 0, false
 }

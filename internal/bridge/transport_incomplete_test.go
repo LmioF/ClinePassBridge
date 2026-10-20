@@ -208,12 +208,13 @@ func TestStreamClosePreservesOrdinaryErrorPolicy(t *testing.T) {
 		status int
 		scope  string
 		err    error
+		exempt bool
 	}{
-		{"authentication", 401, "", classifyUpstreamError(401, nil, map[string]any{"error": "invalid authentication"}, now)},
-		{"rate limit", 429, "credential_model", classifyUpstreamError(429, nil, map[string]any{"error": "rate limited"}, now)},
-		{"team limit", 429, "upstream_team", classifyUpstreamError(429, nil, map[string]any{"error": teamLimitMessage}, now)},
-		{"account quota", 502, "account", classifyUpstreamError(502, nil, map[string]any{"error": "reached your weekly Clinepass limit"}, now)},
-		{"egress limit", 429, "egress_ip", &upstreamError{APIError: &APIError{429, "upstream_ip_rate_limited", "edge rate limit"}, Scope: "egress_ip", RetryAt: now.Add(time.Minute)}},
+		{"authentication", 401, "credential_model", classifyUpstreamError(401, nil, map[string]any{"error": "invalid authentication"}, now), false},
+		{"rate limit", 429, "credential_model", classifyUpstreamError(429, nil, map[string]any{"error": "rate limited"}, now), false},
+		{"team limit", 429, "upstream_team", classifyUpstreamError(429, nil, map[string]any{"error": teamLimitMessage}, now), true},
+		{"account quota", 502, "account", classifyUpstreamError(502, nil, map[string]any{"error": "reached your weekly Clinepass limit"}, now), false},
+		{"egress limit", 429, "egress_ip", &upstreamError{APIError: &APIError{429, "upstream_ip_rate_limited", "edge rate limit"}, Scope: "egress_ip", RetryAt: now.Add(time.Minute)}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewService()
@@ -229,7 +230,11 @@ func TestStreamClosePreservesOrdinaryErrorPolicy(t *testing.T) {
 			entry := LogEntry{DownstreamStarted: new(bool)}
 			logErrorDetails(&entry, nil, tt.err)
 			s.closeOutputStream("fixture", &entry, tt.err)
-			if details.HTTPStatus != tt.status || details.Scope != tt.scope || details.RequestScoped || entry.CooldownDisposition != "host_policy" {
+			wantDisposition := "host_policy"
+			if tt.exempt {
+				wantDisposition = "exempt"
+			}
+			if details.HTTPStatus != tt.status || details.Scope != tt.scope || details.RequestScoped != tt.exempt || entry.CooldownDisposition != wantDisposition {
 				t.Fatalf("ordinary error lost its policy: details=%#v log=%#v", details, entry)
 			}
 			upstream := tt.err.(*upstreamError)
