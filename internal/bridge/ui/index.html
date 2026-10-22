@@ -130,7 +130,8 @@
     .log-controls .toolbar { margin-bottom: 12px; }
     .network-log-filter { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; color: var(--ink); font-size: 12px; cursor: pointer; }
     .network-log-filter input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
-    .network-log-badge { margin-top: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .badge.network-log-badge { margin-top: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, #60a5fa 16%, var(--surface)); color: #2563eb; }
+    :root[data-theme="dark"] .badge.network-log-badge { color: #93c5fd; }
     .notice { margin: 14px 0 0; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); border-radius: 4px; color: var(--ink); background: color-mix(in srgb, var(--warn) 7%, var(--surface)); }
     .notice.error { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
     .notice[hidden], [hidden] { display: none !important; }
@@ -863,7 +864,8 @@
   <dialog id="modelToolsDialog" aria-labelledby="modelToolsTitle" aria-describedby="modelToolsHint">
     <form id="modelToolsForm">
       <div class="panel-head"><div><h2 id="modelToolsTitle">联网工具</h2><p class="panel-hint mono" id="modelToolsModel"></p></div><button class="button icon ghost" type="button" id="closeModelTools" data-icon="close" aria-label="关闭"></button></div>
-      <p class="panel-hint" id="modelToolsHint">勾选的工具会在 bridge 发出请求时追加到 <code>tools</code>，由上游执行；搜索结果只进入模型上下文，客户端拿不到来源列表，也不会收到 tool_calls。费用按上游每次请求计。</p>
+      <p class="panel-hint" id="modelToolsHint">勾选的工具会在 bridge 发出请求时追加到 <code>tools</code>，由上游执行；搜索结果只进入模型上下文，客户端拿不到来源列表，也不会收到 tool_calls。</p>
+      <p class="panel-hint">搜索调用消耗 ClinePass 额度；下方价格为 Cline 上游 Vercel Gateway 标注的官方价格，ClinePass 订阅内的实际消耗不一定按此价格计算。</p>
       <div class="model-tool-list" id="modelToolsList"></div>
       <label class="model-tool-custom">其他类型 <input class="control mono" id="modelToolsCustom" type="text" placeholder="vercel:other_tool，多个用逗号分隔" aria-label="其他工具类型"></label>
       <div class="dialog-actions"><span class="inline-state" id="modelToolsState" role="status"></span><button class="button compact" type="button" id="retryModelTools" data-icon="refresh" hidden>重试</button><button class="button compact" type="button" id="cancelModelTools">取消</button><button class="button compact primary" type="submit" id="saveModelTools" data-icon="save" disabled>保存</button></div>
