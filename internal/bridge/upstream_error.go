@@ -23,6 +23,7 @@ func streamIdleTimeout(timeout time.Duration) error {
 }
 
 var wrappedRateLimit = regexp.MustCompile(`(?is)request failed with status 429:\s*.*rate limit exceeded`)
+var wrappedBadRequest = regexp.MustCompile(`(?i)\brequest failed with status\s+400\s*:\s*`)
 var retrySecondsPattern = regexp.MustCompile(`(?i)retry after\s+(\d+(?:\.\d+)?)\s*s\b`)
 
 // Vercel reports the provider it routed to inside the response body. Failures
@@ -44,6 +45,12 @@ type upstreamError struct {
 	ProviderSource string
 	QuotaType      string
 	QuotaResetAt   *time.Time
+	RequestDetails *upstreamRequestDetails
+}
+
+type upstreamRequestDetails struct {
+	Param   string
+	Message string
 }
 
 func (e *upstreamError) IsRequestScoped() bool {
@@ -95,6 +102,49 @@ func routingFacts(body map[string]any) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+func hasUpstreamErrorStatus(body map[string]any, except int) bool {
+	detail := object(body["error"])
+	for _, value := range []any{detail["status"], detail["status_code"], body["status"], body["status_code"]} {
+		n := number(value)
+		if text, ok := value.(string); ok {
+			n, _ = strconv.ParseInt(text, 10, 64)
+		}
+		if n >= 400 && n <= 599 && int(n) != except {
+			return true
+		}
+	}
+	return false
+}
+
+// A successful SSE response can hide the provider's HTTP 400 inside a gateway
+// message. Accept only its complete JSON error envelope and a recognized request
+// code/type, never a bare "400" or "Invalid input" in arbitrary error text.
+func wrappedUpstreamRequestError(message string) *upstreamRequestDetails {
+	if len(message) > 64<<10 {
+		return nil
+	}
+	for depth := 0; depth < 4; depth++ {
+		prefix := wrappedBadRequest.FindStringIndex(message)
+		if prefix == nil {
+			return nil
+		}
+		body, err := decodeObject([]byte(message[prefix[1]:]))
+		if err != nil || object(body["error"]) == nil || hasUpstreamErrorStatus(body, 400) {
+			return nil
+		}
+		codes := strings.Join(upstreamErrorCodes(body), " ")
+		message = errorMessage(body)
+		if isUpstreamCredentialError(body) || isUpstreamModelError(body) || isProviderTransportIncomplete(body) ||
+			quotaErrorType(codes, message) != "" || strings.Contains(codes, "rate_limit") {
+			return nil
+		}
+		if isUpstreamRequestError(0, body) {
+			return &upstreamRequestDetails{Param: str(object(body["error"])["param"]), Message: message}
+		}
+	}
+	return nil
 }
 
 func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]any, now time.Time, fallback ...int) error {
@@ -186,6 +236,12 @@ func classifyUpstreamError(httpStatus int, headers http.Header, body map[string]
 		kind, result.Scope = upstreamRequestKind, "request"
 	case status >= 500 && status <= 599:
 		kind, result.Scope = upstreamServiceKind, "request"
+		if httpStatus == http.StatusOK && !hasUpstreamErrorStatus(body, 0) {
+			if request := wrappedUpstreamRequestError(message); request != nil {
+				status, result.UpstreamStatus, kind = http.StatusBadRequest, http.StatusBadRequest, upstreamRequestKind
+				result.RequestDetails = request
+			}
+		}
 	}
 	result.APIError = &APIError{Status: status, Kind: kind, Message: message}
 	result.Provider, result.ProviderSource = routingFacts(body)

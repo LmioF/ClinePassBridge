@@ -10,6 +10,9 @@ import (
 // ClientErrorMessage applies the current compatibility setting at the client
 // boundary; diagnostic logs keep the original error.
 func (s *Service) ClientErrorMessage(err error) string {
+	if message := requestErrorClientMessage(err); message != "" {
+		return message
+	}
 	if s != nil && !s.config().ClientRetryCompatibility {
 		return safeError(err)
 	}
@@ -21,6 +24,9 @@ func (s *Service) ClientErrorMessage(err error) string {
 // TransferEncodingError's 400 for a rejected request, even after an HTTP 502.
 // The original exception remains on the error and in the diagnostic log.
 func ClientErrorMessage(err error) string {
+	if message := requestErrorClientMessage(err); message != "" {
+		return message
+	}
 	var upstream *upstreamError
 	if errors.As(err, &upstream) && upstream.Kind == transportIncompleteKind && upstream.IsRequestScoped() {
 		return "HTTP 502: upstream response stream ended before completion: unexpected EOF (upstream_transport_incomplete)"
@@ -36,6 +42,31 @@ func ClientErrorMessage(err error) string {
 		}
 	}
 	return safeError(err)
+}
+
+// Reliable parameter diagnostics are useful independently of retry compatibility.
+// Keep the original gateway message on the error and in request logs.
+func requestErrorClientMessage(err error) string {
+	var upstream *upstreamError
+	if !errors.As(err, &upstream) || upstream.Kind != upstreamRequestKind || upstream.Status != http.StatusBadRequest || upstream.RequestDetails == nil {
+		return ""
+	}
+	part := func(value string, limit int) string {
+		value = strings.Join(strings.Fields(safeError(errors.New(value))), " ")
+		if len(value) > limit {
+			value = strings.ToValidUTF8(value[:limit], "") + "..."
+		}
+		return value
+	}
+	target := "request"
+	if param := part(upstream.RequestDetails.Param, 96); param != "" {
+		target += " parameter " + param
+	}
+	reason := part(upstream.RequestDetails.Message, 240)
+	if reason == "" {
+		reason = "Invalid request parameters"
+	}
+	return safeError(errors.New(fmt.Sprintf("Upstream rejected %s: %s. Check the message content and the model route's supported input types.", target, strings.TrimRight(reason, "."))))
 }
 
 // Stock CPA forwards JSON in its string-only stream error callback. ZCode
