@@ -354,6 +354,7 @@ func unwrap(body []byte) (map[string]any, error) {
 
 // Only explicit response routing facts count as actual providers. Candidate lists never do.
 func observeMetadata(j map[string]any, entry *LogEntry, attempt *Attempt) {
+	observeServerToolCalls(j, entry, attempt)
 	apply := func(p, path string) {
 		if p != "" {
 			if strings.HasSuffix(attempt.ProviderSource, ".finalProvider") && !strings.HasSuffix(path, ".finalProvider") {

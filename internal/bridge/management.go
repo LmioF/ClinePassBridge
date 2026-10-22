@@ -236,11 +236,15 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 	search := strings.ToLower(r.Query.Get("search"))
 	status := r.Query.Get("status")
 	provider := r.Query.Get("provider")
+	networkUsed := r.Query.Get("network") == "used"
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	filtered := []LogEntry{}
 	for i := len(s.logs) - 1; i >= 0; i-- {
 		v := s.logs[i]
+		if networkUsed && !hasServerToolCalls(v) {
+			continue
+		}
 		label := ""
 		if v.UpstreamSkipped {
 			label = localBackoffLabel

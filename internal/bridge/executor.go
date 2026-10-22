@@ -285,10 +285,20 @@ func (s *Service) readWatched(up upstreamStream, fn func([]byte) error, watchdog
 	}
 }
 func (s *Service) readJSON(up upstreamStream) ([]byte, error) {
+	return s.readJSONObserved(up, nil)
+}
+
+func (s *Service) readJSONObserved(up upstreamStream, observe func(map[string]any)) ([]byte, error) {
 	var b bytes.Buffer
 	e := s.read(up, func(v []byte) error { b.Write(v); return nil })
+	var j map[string]any
+	if observe != nil || up.StatusCode < 200 || up.StatusCode >= 300 {
+		j, _ = decodeObject(b.Bytes())
+	}
+	if observe != nil && j != nil {
+		observe(j)
+	}
 	if up.StatusCode < 200 || up.StatusCode >= 300 {
-		j, _ := decodeObject(b.Bytes())
 		err := classifyUpstreamResponseError(up.StatusCode, up.Headers, j, b.Bytes(), time.Now())
 		return nil, s.classifyEgressError(up, j, b.Bytes(), err)
 	}
@@ -339,6 +349,7 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 		t := time.Now()
 		var us upstreamStream
 		*entry.UpstreamAttempts++
+		recordServerTools(j, &entry, &attempt)
 		us, e = s.request(r, c, j, wantStream)
 		if e == nil {
 			if wantStream {
@@ -349,7 +360,9 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 				}
 			} else {
 				var raw []byte
-				raw, e = s.readJSON(us)
+				raw, e = s.readJSONObserved(us, func(root map[string]any) {
+					observeServerToolCalls(root, &entry, &attempt)
+				})
 				if e == nil {
 					var o map[string]any
 					root, _ := decodeObject(raw)
@@ -386,12 +399,13 @@ func (s *Service) execute(r ExecutorRequest) (any, error) {
 	return Response{Payload: body, Headers: http.Header{"Content-Type": []string{"application/json"}}}, nil
 }
 func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, attempt *Attempt, start time.Time, emit func([]byte) error, expectedChoices ...int64) (*completion, error) {
+	observe := func(root map[string]any) { observeServerToolCalls(root, entry, attempt) }
 	if us.StatusCode < 200 || us.StatusCode >= 300 {
-		_, e := s.readJSON(us)
+		_, e := s.readJSONObserved(us, observe)
 		return nil, e
 	}
 	if !strings.Contains(strings.ToLower(us.Headers.Get("Content-Type")), "text/event-stream") {
-		_, e := s.readJSON(us)
+		_, e := s.readJSONObserved(us, observe)
 		if e != nil {
 			return nil, e
 		}
@@ -436,6 +450,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 				return upstreamProtocolFailure("upstream returned invalid JSON")
 			}
 			if j["error"] != nil || event == "error" || j["success"] == false {
+				observeServerToolCalls(j, entry, attempt)
 				if d := watchdog.streamDiagnostics(); d != nil {
 					d.observeFrame("error")
 				}
@@ -508,6 +523,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 	start := time.Now()
 	var lease *rateLease
 	upstreamOpened := false
+	attempt := Attempt{Mode: "stream", Provider: "unknown"}
 	failEarly := func(err error) (any, error) {
 		defer s.active.Done()
 		_ = s.observeQuotaError(c, err)
@@ -515,7 +531,9 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		entry.Status = statusOf(err)
 		entry.Error = safeError(err)
 		entry.DurationMS = time.Since(start).Milliseconds()
-		attempt := Attempt{Status: entry.Status, Error: entry.Error, Mode: "stream", Provider: "unknown", DurationMS: entry.DurationMS}
+		attempt.Status = entry.Status
+		attempt.Error = entry.Error
+		attempt.DurationMS = entry.DurationMS
 		s.logErrorDetails(&entry, &attempt, err)
 		entry.Attempts = append(entry.Attempts, attempt)
 		if upstreamOpened {
@@ -535,13 +553,16 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		return failEarly(e)
 	}
 	*entry.UpstreamAttempts++
+	recordServerTools(j, &entry, &attempt)
 	us, e := s.request(r, c, j, true)
 	upstreamOpened = us.StreamID != ""
 	if e != nil {
 		return failEarly(e)
 	}
 	if us.StatusCode < 200 || us.StatusCode >= 300 {
-		_, e = s.readJSON(us)
+		_, e = s.readJSONObserved(us, func(root map[string]any) {
+			observeServerToolCalls(root, &entry, &attempt)
+		})
 		return failEarly(e)
 	}
 	output := &outputStreamLifecycle{service: s, id: r.StreamID}
@@ -551,7 +572,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 	ready := make(chan error, 1)
 	go func() {
 		defer s.active.Done()
-		attempt := Attempt{Mode: "stream", Provider: "unknown", ProviderSource: "not_reported"}
+		attempt.ProviderSource = "not_reported"
 		var err error
 		started := false
 		var pending [][]byte

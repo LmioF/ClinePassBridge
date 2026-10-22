@@ -128,6 +128,9 @@
     .rate-history-hint { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 4px; border: 1px solid currentColor; border-radius: 50%; color: var(--warn); font-size: 10px; cursor: help; }
     .panel.log-controls { padding: 16px; margin-bottom: 16px; }
     .log-controls .toolbar { margin-bottom: 12px; }
+    .network-log-filter { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; color: var(--ink); font-size: 12px; cursor: pointer; }
+    .network-log-filter input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+    .network-log-badge { margin-top: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     .notice { margin: 14px 0 0; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); border-radius: 4px; color: var(--ink); background: color-mix(in srgb, var(--warn) 7%, var(--surface)); }
     .notice.error { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
     .notice[hidden], [hidden] { display: none !important; }
@@ -582,6 +585,7 @@
         <input class="control search" id="search" type="search" placeholder="搜索模型、渠道或错误" aria-label="搜索请求日志">
         <select class="control" id="statusFilter" aria-label="按状态筛选"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
         <input class="control provider-filter" id="providerFilter" placeholder="实际渠道" aria-label="按实际渠道筛选" autocomplete="off">
+        <label class="network-log-filter" title="仅显示上游已报告成功调用联网工具的请求"><input id="networkOnly" type="checkbox">仅看联网请求</label>
         <button class="button compact" id="refreshLogs" type="button" title="刷新日志和统计" data-icon="refresh">刷新</button>
         <span class="count" id="logCount">-- 条</span>
       </div>
@@ -1321,6 +1325,35 @@
       const mapping = log.reasoning_mapping;
       return mapping ? `${reasoningLabel(mapping.from)} → ${reasoningLabel(mapping.to)}` : log.reasoning_effort || '—';
     }
+    function networkToolName(type) {
+      const name = String(type).replace(/^vercel:/, '');
+      return ({ exa_search: 'Exa', perplexity_search: 'Perplexity', parallel_search: 'Parallel', tako_search: 'Tako', browserbase_search: 'Browserbase 搜索', browserbase_fetch: 'Browserbase 抓取' })[name] || name;
+    }
+    function networkLogFacts(log) {
+      const supplied = Array.isArray(log.server_tools) ? [...new Set(log.server_tools.filter((tool) => typeof tool === 'string' && tool))] : [];
+      const calls = log.server_tool_calls && typeof log.server_tool_calls === 'object' && !Array.isArray(log.server_tool_calls)
+        ? Object.entries(log.server_tool_calls).filter(([, count]) => Number.isSafeInteger(count) && count >= 0).sort(([a], [b]) => a.localeCompare(b)) : [];
+      const used = calls.filter(([, count]) => count > 0);
+      const reported = log.server_tool_calls_reported === true || used.length > 0;
+      const visible = log.upstream_skipped !== true && (supplied.length > 0 || reported);
+      const missing = Array.isArray(log.attempts) ? log.attempts.filter((attempt) => attempt.upstream_skipped !== true && Array.isArray(attempt.server_tools) && attempt.server_tools.length && attempt.server_tool_calls_reported !== true).length : 0;
+      const detail = used.length ? used.map(([tool, count]) => `${networkToolName(tool)} ×${number(count)}`).join('、') : reported ? '已报告 0 次' : '未报告';
+      const total = used.reduce((sum, [, count]) => sum + count, 0);
+      const label = used.length === 1 ? detail : used.length ? `${number(total)} 次` : reported ? '0 次' : '未报告';
+      const title = [supplied.length ? `已提供：${supplied.map(networkToolName).join('、')}` : '', `成功调用：${detail}`, missing ? `${number(missing)} 次上游尝试未报告联网调用次数；当前仅汇总已报告的次数。` : '次数来自上游回传的成功调用计数。'].filter(Boolean).join('\n');
+      return { supplied, used, reported, visible, detail, label, title, missing };
+    }
+    function networkLogBadge(log) {
+      const data = networkLogFacts(log);
+      if (!data.visible) return '';
+      return `<span class="badge network-log-badge${data.used.length ? ' good' : ''}" title="${esc(data.title)}">联网 · ${esc(data.label)}</span>`;
+    }
+    function networkLogDetails(log) {
+      const data = networkLogFacts(log);
+      if (!data.visible) return '';
+      const status = data.missing && data.reported ? `${data.detail}（部分尝试未报告）` : data.detail;
+      return datum('提供的联网工具', data.supplied.length ? data.supplied.map(networkToolName).join('、') : '未记录') + datum('成功联网调用', status);
+    }
     function logMarkup(log) {
       const debug = state.logDebug === true ? log.stream_diagnostics : null;
       const status = statusInfo(log.status);
@@ -1343,13 +1376,13 @@
       const usageTitle = logUsageReported(log, 'prompt') && logUsageReported(log, 'completion') ? '输入 / 输出 tokens' : '上游未报告完整用量；已生成内容的请求仍可能产生消耗';
       const attemptMarkup = attempts.length ? attempts.map((attempt, index) => {
         const attemptStatus = statusInfo(attempt.status);
-        return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><span>${formatLogDuration(attempt.duration_ms)}</span><span class="error-text">${shown(attempt.error, '—')}</span></div>`;
+        return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><span>${formatLogDuration(attempt.duration_ms)}</span>${networkLogBadge(attempt)}<span class="error-text">${shown(attempt.error, '—')}</span></div>`;
       }).join('') : `<div class="subtext">${local ? '本地退避拦截，未发起上游请求' : '无尝试明细'}</div>`;
       return `<details class="log-entry" data-id="${esc(log.id)}"><summary class="row-main">
         <div class="cell"><span class="cell-label">时间</span><div class="primary-text mono">${local ? '首 ' : ''}${formatTime(log.time)}</div>${local ? `<div class="subtext mono">末 ${formatTime(lastTime)}</div>` : ''}</div>
         <div class="cell log-model"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono" title="${esc(log.model || '')}">${shown(log.model)}</div><div class="subtext mono" title="${esc(log.upstream_model || '')}">${shown(log.upstream_model)}</div></div>
         <div class="cell"><span class="cell-label">思考强度</span><span class="badge reasoning-badge" title="${log.reasoning_mapping ? (local ? '映射已计算；本次被本地退避拦截，未发往上游' : '插件收到的强度 → 发往上游的强度') : '未应用插件映射；— 表示未识别到显式强度'}">${esc(reasoningText(log))}</span></div>
-        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : incomplete ? '响应截断' : idleCutoff ? '卡住截流' : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
+        <div class="cell"><span class="cell-label">结果</span><span class="badge ${local ? 'warn' : status.cls}" title="${esc(limitLabel)}">${local ? `本地拦截 ×${number(count)}` : limited ? limitName : incomplete ? '响应截断' : idleCutoff ? '卡住截流' : log.error_kind === 'upstream_quota_exhausted' ? '额度耗尽' : status.label}</span><div class="subtext">${local ? '本地退避' : log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div>${networkLogBadge(log)}</div>
         <div class="cell"><span class="cell-label">凭据</span><div class="primary-text truncate" title="${esc(credential)}">${esc(credential)}</div></div>
         <div class="cell"><span class="cell-label">实际上游</span><div class="primary-text truncate" title="${actual}">${actual}</div></div>
         <div class="cell"><span class="cell-label">首字 / 耗时</span><div class="log-latency">${latencyLine('首字', log.ttft_ms, 'ttft', local, log.completion_tokens)}${latencyLine('耗时', log.duration_ms, 'duration', local, log.completion_tokens)}</div></div>
@@ -1363,6 +1396,7 @@
             ${datum('实际上游', actualProvider(log.provider, log.upstream_skipped), '未知')}
             ${datum('实际凭据', credential, '—')}
             ${datum('上游请求', `${number(upstreamAttempts)} 次`)}
+            ${networkLogDetails(log)}
             ${datum('首字时间', ttft(log), '—')}
             ${datum('总耗时', duration, '—')}
             ${datum('输出速率', speed, '—')}
@@ -1511,7 +1545,7 @@
       syncLogsRefreshButton();
       $('logList').innerHTML = '<div class="empty">正在读取日志…</div>';
       try {
-        const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value }, signal: controller.signal });
+        const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value, network: $('networkOnly').checked ? 'used' : '' }, signal: controller.signal });
         if (controller !== state.logsController) return;
         state.logDebug = data?.debug === true;
         const items = Array.isArray(data?.items) ? data.items : [];
@@ -2270,6 +2304,7 @@
     $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.page = 0; loadLogs(); }, 280); });
     $('statusFilter').addEventListener('change', () => { state.page = 0; loadLogs(); });
     $('providerFilter').addEventListener('change', () => { state.page = 0; loadLogs(); });
+    $('networkOnly').addEventListener('change', () => { state.page = 0; loadLogs(); });
     $('authButton').addEventListener('click', () => { renderAuthState(); $('authDialog').showModal(); });
     $('closeAuth').addEventListener('click', () => $('authDialog').close());
     $('clearAuth').addEventListener('click', () => { state.key = ''; state.rememberAuth = false; window.PassBridgeClearAuth?.(); $('authKey').value = ''; $('rememberAuth').checked = false; pauseAuth(new Error('插件手动保存的管理密钥已清除，请重新验证')); toast('插件手动保存的管理密钥已清除'); });
