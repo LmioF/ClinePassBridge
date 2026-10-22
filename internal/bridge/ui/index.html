@@ -585,7 +585,7 @@
         <input class="control search" id="search" type="search" placeholder="搜索模型、渠道或错误" aria-label="搜索请求日志">
         <select class="control" id="statusFilter" aria-label="按状态筛选"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
         <input class="control provider-filter" id="providerFilter" placeholder="实际渠道" aria-label="按实际渠道筛选" autocomplete="off">
-        <label class="network-log-filter" title="仅显示上游已报告成功调用联网工具的请求"><input id="networkOnly" type="checkbox">仅看联网请求</label>
+        <label class="network-log-filter" title="仅显示上游已报告成功调用搜索工具的请求"><input id="networkOnly" type="checkbox">仅看搜索请求</label>
         <button class="button compact" id="refreshLogs" type="button" title="刷新日志和统计" data-icon="refresh">刷新</button>
         <span class="count" id="logCount">-- 条</span>
       </div>
@@ -743,21 +743,26 @@
       <form method="dialog"><button class="button icon ghost" type="submit" aria-label="关闭公告" title="关闭"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
     </div>
     <div class="release-notice-body" tabindex="0" role="region" aria-label="公告内容">
-      <section class="release-notice-item release-notice-featured" aria-labelledby="releaseNotice1017Title">
-        <div class="release-notice-label"><span class="release-notice-number">01</span><span class="badge good">新模型上线</span></div>
+      <section class="release-notice-item release-notice-featured" aria-labelledby="releaseNoticeSearchTitle">
+        <div class="release-notice-label"><span class="release-notice-number">01</span><span class="badge good">搜索工具已支持</span></div>
+        <h3 id="releaseNoticeSearchTitle">目前已支持搜索工具</h3>
+        <p>需要自行前往<strong>「模型映射」</strong>，点击对应模型的<strong>「联网」</strong>按钮，选择搜索工具并保存后使用。</p>
+      </section>
+      <section class="release-notice-item" aria-labelledby="releaseNotice1017Title">
+        <div class="release-notice-label"><span class="release-notice-number">02</span><span class="badge good">新模型上线</span></div>
         <h3 id="releaseNotice1017Title">DeepSeek V4.1 Flash 1017</h3>
         <p>Cline 已在 ClinePass 中推出 <code>cline-pass/deepseek-v4.1-flash-1017</code> 模型。</p>
         <p class="release-notice-callout">由于 1017 模型在 Cline 侧就与老模型使用不同的模型名，<strong>您需要自行添加模型映射，才能使用 1017 模型，请注意！</strong></p>
       </section>
       <section class="release-notice-item" aria-labelledby="releaseNoticeIdleTitle">
-        <div class="release-notice-label"><span class="release-notice-number">02</span><span class="badge warn">强烈建议</span></div>
+        <div class="release-notice-label"><span class="release-notice-number">03</span><span class="badge warn">强烈建议</span></div>
         <h3 id="releaseNoticeIdleTitle">关闭「流式卡住时提前截流」</h3>
         <p>此功能有小概率导致提前截流，出现 <strong>502 错误</strong>，目前强烈建议关闭。</p>
         <p>它原本是为前几天频繁出现的 Cline 流式卡住问题设计的。目前 Cline 那边已无此问题，就没有必要继续开启。</p>
         <p>此功能上线时默认开启，<strong>老用户需要手动关闭并保存</strong>。目前版本已改为默认关闭，升级会保留已有设置。</p>
       </section>
       <section class="release-notice-item" aria-labelledby="releaseNoticeLimitTitle">
-        <div class="release-notice-label"><span class="release-notice-number">03</span><span class="badge">默认值调整 · 16 → 64 MiB</span></div>
+        <div class="release-notice-label"><span class="release-notice-number">04</span><span class="badge">默认值调整 · 16 → 64 MiB</span></div>
         <h3 id="releaseNoticeLimitTitle">调高最大响应大小，减少长输出截断</h3>
         <p>此前插件内置的 <code>max_response_bytes</code> 默认值为 <strong>16 MiB</strong>。这一上限偏小，长思维链可能在输出后期超过限制，出现 <strong>413 错误并截断</strong>。</p>
         <p>目前默认值已提高至 <strong>64 MiB</strong>。请老用户更新后前往「配置概览 → 请求与日志设置」，将「最大响应大小」调整为 <strong>64 MiB</strong> 并保存。</p>
@@ -1335,24 +1340,24 @@
         ? Object.entries(log.server_tool_calls).filter(([, count]) => Number.isSafeInteger(count) && count >= 0).sort(([a], [b]) => a.localeCompare(b)) : [];
       const used = calls.filter(([, count]) => count > 0);
       const reported = log.server_tool_calls_reported === true || used.length > 0;
-      const visible = log.upstream_skipped !== true && (supplied.length > 0 || reported);
+      const visible = log.upstream_skipped !== true && used.length > 0;
       const missing = Array.isArray(log.attempts) ? log.attempts.filter((attempt) => attempt.upstream_skipped !== true && Array.isArray(attempt.server_tools) && attempt.server_tools.length && attempt.server_tool_calls_reported !== true).length : 0;
       const detail = used.length ? used.map(([tool, count]) => `${networkToolName(tool)} ×${number(count)}`).join('、') : reported ? '已报告 0 次' : '未报告';
       const total = used.reduce((sum, [, count]) => sum + count, 0);
       const label = used.length === 1 ? detail : used.length ? `${number(total)} 次` : reported ? '0 次' : '未报告';
-      const title = [supplied.length ? `已提供：${supplied.map(networkToolName).join('、')}` : '', `成功调用：${detail}`, missing ? `${number(missing)} 次上游尝试未报告联网调用次数；当前仅汇总已报告的次数。` : '次数来自上游回传的成功调用计数。'].filter(Boolean).join('\n');
+      const title = [supplied.length ? `已提供：${supplied.map(networkToolName).join('、')}` : '', `成功调用：${detail}`, missing ? `${number(missing)} 次上游尝试未报告搜索调用次数；当前仅汇总已报告的次数。` : '次数来自上游回传的成功调用计数。'].filter(Boolean).join('\n');
       return { supplied, used, reported, visible, detail, label, title, missing };
     }
     function networkLogBadge(log) {
       const data = networkLogFacts(log);
       if (!data.visible) return '';
-      return `<span class="badge network-log-badge${data.used.length ? ' good' : ''}" title="${esc(data.title)}">联网 · ${esc(data.label)}</span>`;
+      return `<span class="badge network-log-badge good" title="${esc(data.title)}">搜索 · ${esc(data.label)}</span>`;
     }
     function networkLogDetails(log) {
       const data = networkLogFacts(log);
       if (!data.visible) return '';
       const status = data.missing && data.reported ? `${data.detail}（部分尝试未报告）` : data.detail;
-      return datum('提供的联网工具', data.supplied.length ? data.supplied.map(networkToolName).join('、') : '未记录') + datum('成功联网调用', status);
+      return datum('提供的搜索工具', data.supplied.length ? data.supplied.map(networkToolName).join('、') : '未记录') + datum('成功搜索调用', status);
     }
     function logMarkup(log) {
       const debug = state.logDebug === true ? log.stream_diagnostics : null;

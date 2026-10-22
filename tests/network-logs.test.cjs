@@ -21,23 +21,22 @@ function formatter() {
   return context;
 }
 
-test('network badges distinguish actual calls, supplied tools, zero and old logs', () => {
+test('network badges and details appear only for positive successful calls', () => {
   const view = formatter();
   const supplied = { server_tools: ['vercel:exa_search'] };
-  assert.equal(view.networkLogBadge({}), '');
-  assert.equal(view.networkLogDetails({}), '');
-  assert.match(view.networkLogBadge(supplied), /联网 · 未报告/);
-  assert.doesNotMatch(view.networkLogBadge(supplied), /good|0 次/);
   const zero = { ...supplied, server_tool_calls_reported: true, server_tool_calls: {} };
-  assert.match(view.networkLogBadge(zero), /联网 · 0 次/);
-  assert.doesNotMatch(view.networkLogBadge(zero), /good/);
+  for (const row of [{}, supplied, zero, { ...zero, server_tool_calls: { exa_search: 0 } }]) {
+    assert.equal(view.networkLogBadge(row), '');
+    assert.equal(view.networkLogDetails(row), '');
+  }
 
   const actual = { ...supplied, server_tool_calls_reported: true, server_tool_calls: { exa_search: 2 } };
   assert.match(view.networkLogBadge(actual), /good/);
-  assert.match(view.networkLogBadge(actual), /联网 · Exa ×2/);
-  assert.match(view.networkLogDetails(actual), /提供的联网工具: Exa/);
-  assert.match(view.networkLogDetails(actual), /成功联网调用: Exa ×2/);
+  assert.match(view.networkLogBadge(actual), /搜索 · Exa ×2/);
+  assert.match(view.networkLogDetails(actual), /提供的搜索工具: Exa/);
+  assert.match(view.networkLogDetails(actual), /成功搜索调用: Exa ×2/);
   assert.equal(view.networkLogBadge({ ...actual, upstream_skipped: true }), '');
+  assert.equal(view.networkLogDetails({ ...actual, upstream_skipped: true }), '');
 });
 
 test('multi-tool details show partial retry reporting and escape metadata names', () => {
@@ -52,7 +51,7 @@ test('multi-tool details show partial retry reporting and escape metadata names'
     ],
   };
   const badge = view.networkLogBadge(row);
-  assert.match(badge, /联网 · 3 次/);
+  assert.match(badge, /搜索 · 3 次/);
   assert.match(badge, /Exa ×2、Tako ×1/);
   assert.match(badge, /1 次上游尝试未报告/);
   assert.match(view.networkLogDetails(row), /部分尝试未报告/);
