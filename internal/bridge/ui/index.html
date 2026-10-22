@@ -505,6 +505,13 @@
     .credential-toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 3px; }
     .credential-toggle:has(input:disabled) { opacity: .55; cursor: not-allowed; }
     @media (prefers-reduced-motion: reduce) { .toggle-track, .toggle-track::after { transition: none; } }
+    .model-tool-list { display: grid; gap: 10px; margin: 12px 0; }
+    .model-tool-option { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+    .model-tool-option:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+    .model-tool-option input { margin-top: 2px; }
+    .model-tool-option .model-tool-note { grid-column: 2; font-size: 12px; color: var(--muted); }
+    .model-tool-custom { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 8px; }
+    .model-tool-custom .control { flex: 1 1 auto; min-width: 180px; }
     #errorRulesDialog { max-width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
     #errorRulesDialog .panel-head { margin-bottom: 16px; gap: 12px; }
     #errorRulesList { display: grid; gap: 12px; }
@@ -842,6 +849,15 @@
     <div class="candidate-list" id="candidateList" aria-live="polite"></div>
     <p class="inline-state" id="candidateState" role="status"></p>
     <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button" data-icon="close">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled data-icon="check">应用更改</button></div>
+  </dialog>
+  <dialog id="modelToolsDialog" aria-labelledby="modelToolsTitle" aria-describedby="modelToolsHint">
+    <form method="dialog" id="modelToolsForm">
+      <div class="panel-head"><div><h2 id="modelToolsTitle">联网工具</h2><p class="panel-hint mono" id="modelToolsModel"></p></div><button class="button icon ghost" type="button" id="closeModelTools" data-icon="close" aria-label="关闭"></button></div>
+      <p class="panel-hint" id="modelToolsHint">勾选的工具会在 bridge 发出请求时追加到 <code>tools</code>，由上游执行；搜索结果只进入模型上下文，客户端拿不到来源列表，也不会收到 tool_calls。费用按上游每次请求计。</p>
+      <div class="model-tool-list" id="modelToolsList"></div>
+      <label class="model-tool-custom">其他类型 <input class="control mono" id="modelToolsCustom" type="text" placeholder="vercel:other_tool，多个用逗号分隔" aria-label="其他工具类型"></label>
+      <div class="dialog-actions"><span class="inline-state" id="modelToolsState" role="status"></span><button class="button compact" type="button" id="cancelModelTools">取消</button><button class="button compact primary" type="button" id="saveModelTools" data-icon="save">保存</button></div>
+    </form>
   </dialog>
   <dialog id="errorRulesDialog" aria-labelledby="errorRulesTitle">
     <div class="panel-head"><h2 id="errorRulesTitle" title="按顺序采用首条匹配的规则；同一状态码下，任意条件命中即可。">错误规则</h2><div class="row-actions"><span class="badge">全部 ClinePassBridge 凭据</span><button class="button compact" id="openErrorRuleHelp" type="button" aria-haspopup="dialog" data-icon="info">动作说明</button></div></div>
@@ -1579,7 +1595,7 @@
       const credential = $('modelTestCredential').value;
       $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => {
         const test = modelTestResults.get(modelTestKey(model));
-        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${buttonIcon('test')}${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">${buttonIcon('edit')}编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">${buttonIcon('trash')}删除</button></div>${modelTestHTML(test)}</div>`;
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact model-tools" type="button" data-index="${index}" title="为这个模型注入上游内置搜索工具；客户端不必自己声明">${buttonIcon('search')}联网${modelToolsLabel(model.id)}</button><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${buttonIcon('test')}${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">${buttonIcon('edit')}编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">${buttonIcon('trash')}删除</button></div>${modelTestHTML(test)}</div>`;
       }).join('') : '<div class="empty">暂无模型映射</div>';
       syncPinModelTests();
     }
@@ -2679,6 +2695,7 @@
       catch (error) { toast(`删除失败：${error.message}`); button.disabled = false; }
     });
     /*__SCHEDULING_MODULE__*/
+    /*__MODEL_TOOLS_MODULE__*/
     /*__ERROR_RULES_MODULE__*/
     /*__RELEASE_NOTICE_MODULE__*/
     $('rememberAuth').checked = window.PassBridgeRememberAuth?.() || false;

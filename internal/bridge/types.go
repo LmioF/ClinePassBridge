@@ -136,6 +136,7 @@ type Config struct {
 	DataDir                  string                  `json:"data_dir" yaml:"data_dir"`
 	BaseURL                  string                  `json:"base_url" yaml:"base_url"`
 	Models                   []Model                 `json:"models" yaml:"models"`
+	ServerTools              []ServerToolRule        `json:"server_tools,omitempty" yaml:"server_tools,omitempty"`
 	NonstreamMode            string                  `json:"nonstream_mode" yaml:"nonstream_mode"`
 	ClientRetryCompatibility bool                    `json:"client_retry_compatibility" yaml:"client_retry_compatibility"`
 	StreamIdleCutoffEnabled  bool                    `json:"stream_idle_cutoff_enabled" yaml:"stream_idle_cutoff_enabled"`
@@ -166,6 +167,8 @@ func decodeConfigJSON(raw []byte, cfg *Config) error {
 			next.Models = nil
 		case strings.EqualFold(key, "reasoning_mapping"):
 			next.ReasoningMapping = nil
+		case strings.EqualFold(key, "server_tools"):
+			next.ServerTools = nil
 		}
 	}
 	if err := json.Unmarshal(raw, &next); err != nil {
@@ -249,6 +252,11 @@ func (c *Config) validate() error {
 			}
 			pinned[slug] = true
 			m.Providers[n] = slug
+		}
+	}
+	for i := range c.ServerTools {
+		if err := c.ServerTools[i].validate(); err != nil {
+			return err
 		}
 	}
 	c.ReasoningMapping = nil

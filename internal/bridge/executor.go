@@ -50,6 +50,7 @@ func (s *Service) prepareWithCredential(r ExecutorRequest, c Credential) (map[st
 	}
 	j["model"] = up
 	s.applyProviderRouting(j, r.Model)
+	s.applyServerTools(j, r.Model)
 	return j, c, up, nil
 }
 
