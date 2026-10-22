@@ -70,7 +70,7 @@ func TestErrorPolicyRequestWireBoundaries(t *testing.T) {
 				} else if tc.name != "cancel" && tc.name != "deadline" && !strings.Contains(message, "[clinepassbridge:cpa_compat:") {
 					t.Fatalf("missing explicit compatibility tag: %q", message)
 				}
-				s.closeOutputStream("fixture", &LogEntry{ErrorPhase: "after_output"}, wrapped)
+				s.closeOutputStream("fixture", "", &LogEntry{ErrorPhase: "after_output"}, wrapped)
 				if h.clientError != message || tc.err.Error() != original || statusOf(tc.err) != diagnosticStatus {
 					t.Fatal("RPC/stream encoding diverged or modified diagnostic facts")
 				}

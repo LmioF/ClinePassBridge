@@ -64,7 +64,7 @@ func TestDefaultErrorPolicySSERequestSurvivesStringBoundary(t *testing.T) {
 		if err == nil || entry.EffectiveFrameCount == 0 {
 			t.Fatal("expected a request rejection after model output")
 		}
-		s.sendOutputStreamClose("fixture", "after_output", err)
+		s.sendOutputStreamClose("fixture", "", "after_output", err)
 		var body struct {
 			Error struct{ Type, Message string }
 		}
@@ -102,7 +102,7 @@ func TestDefaultErrorPolicyExplicitRulesOverrideBothWires(t *testing.T) {
 			}
 			h := newFakeHost()
 			s.SetHost(h.call)
-			s.sendOutputStreamClose("fixture", "after_output", err)
+			s.sendOutputStreamClose("fixture", "", "after_output", err)
 			var body struct{ Error struct{ Type string } }
 			jsonErr := json.Unmarshal([]byte(h.clientError), &body)
 			if tc.cooldown {

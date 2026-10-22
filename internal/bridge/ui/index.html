@@ -761,6 +761,7 @@
   <dialog id="retryCompatibilityDialog" aria-labelledby="retryCompatibilityTitle">
     <div class="panel-head"><h2 id="retryCompatibilityTitle">重试兼容</h2><button class="button compact" id="closeRetryCompatibilityHelp" type="button" autofocus data-icon="close">关闭</button></div>
     <p>简化上游服务、协议与连接故障的错误文案，避免客户端被嵌套状态码误导，便于识别为可重试的服务端错误。</p>
+    <p>Chat Completions 已输出后遇到上游服务故障时，使用 ZCode 可识别的服务端错误码，便于客户端进入回合恢复；实际恢复仍受客户端策略和预算约束。</p>
     <p>默认开启。关闭后尽量保留原始报错；上游 5xx、断流、网络失败和本地截流仍保留免冷却兼容。鉴权、限流和额度保护继续生效。完整诊断留在请求日志，已有冷却继续保留。</p>
     <p>CPA 和客户端分别按自身配置决定是否重试及重试次数。</p>
     <p>调整后点击「保存设置」生效。</p>

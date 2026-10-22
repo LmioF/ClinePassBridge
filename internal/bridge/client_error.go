@@ -38,6 +38,30 @@ func ClientErrorMessage(err error) string {
 	return safeError(err)
 }
 
+// Stock CPA forwards JSON in its string-only stream error callback. ZCode
+// recognizes the numeric service-error code even when the HTTP stream is 200;
+// its standard internal_server_error code otherwise becomes unknown/nonretryable.
+// Only a classified service fault after Chat output uses this compatibility
+// envelope. Keep the original host marker in message for cooldown classification.
+func (s *Service) clientStreamErrorMessage(requestPath, phase string, err error) string {
+	message, _ := s.hostErrorDetails(err, true)
+	if s == nil || requestPath != "/v1/chat/completions" || phase != "after_output" || !s.config().ClientRetryCompatibility {
+		return message
+	}
+	var upstream *upstreamError
+	if !errors.As(err, &upstream) || upstream.Kind != upstreamServiceKind || upstream.Scope != "request" ||
+		upstream.Status < 500 || upstream.Status > 599 {
+		return message
+	}
+	policy := s.hostFaultPolicy(err)
+	if policy.Cooldown || policy.Stop || policy.Explicit {
+		return message
+	}
+	return string(jsonBytes(map[string]any{"error": map[string]any{
+		"type": "server_error", "code": "500", "message": message,
+	}}))
+}
+
 // HostErrorDetails preserves stock CPA's transport classification across its
 // stream and RPC ABIs. This is independent of client retry normalization:
 // disabling it keeps diagnostic text where the host can safely classify it.

@@ -25,12 +25,13 @@ type streamCloseResponse struct {
 // A watchdog may close the downstream while the consumer is blocked in emit.
 // Keep the callback and its receipt here; only the consumer writes LogEntry.
 type outputStreamLifecycle struct {
-	service   *Service
-	id        string
-	started   atomic.Bool
-	once      sync.Once
-	cause     error
-	supported bool
+	service     *Service
+	id          string
+	requestPath string
+	started     atomic.Bool
+	once        sync.Once
+	cause       error
+	supported   bool
 }
 
 func (o *outputStreamLifecycle) phase() string {
@@ -43,21 +44,21 @@ func (o *outputStreamLifecycle) phase() string {
 func (o *outputStreamLifecycle) close(err error, phase string) error {
 	o.once.Do(func() {
 		o.cause = err
-		o.supported = o.service.sendOutputStreamClose(o.id, phase, err)
+		o.supported = o.service.sendOutputStreamClose(o.id, o.requestPath, phase, err)
 	})
 	// Once also joins an in-flight watchdog close before its receipt is read.
 	return o.cause
 }
 
-func (s *Service) closeOutputStream(streamID string, entry *LogEntry, err error) {
+func (s *Service) closeOutputStream(streamID, requestPath string, entry *LogEntry, err error) {
 	if streamID == "" {
 		return
 	}
-	recordOutputStreamClose(entry, err, s.sendOutputStreamClose(streamID, entry.ErrorPhase, err), s.hostFaultPolicy(err))
+	recordOutputStreamClose(entry, err, s.sendOutputStreamClose(streamID, requestPath, entry.ErrorPhase, err), s.hostFaultPolicy(err))
 }
 
-func (s *Service) sendOutputStreamClose(streamID, phase string, err error) bool {
-	message, _ := s.hostErrorDetails(err, true)
+func (s *Service) sendOutputStreamClose(streamID, requestPath, phase string, err error) bool {
+	message := s.clientStreamErrorMessage(requestPath, phase, err)
 	payload := map[string]any{"stream_id": streamID, "error": message}
 	if err != nil {
 		policy := s.hostFaultPolicy(err)

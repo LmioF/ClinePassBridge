@@ -229,7 +229,7 @@ func TestStreamClosePreservesOrdinaryErrorPolicy(t *testing.T) {
 			})
 			entry := LogEntry{DownstreamStarted: new(bool)}
 			logErrorDetails(&entry, nil, tt.err)
-			s.closeOutputStream("fixture", &entry, tt.err)
+			s.closeOutputStream("fixture", "", &entry, tt.err)
 			wantDisposition := "host_policy"
 			if tt.exempt {
 				wantDisposition = "exempt"

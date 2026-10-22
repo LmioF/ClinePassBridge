@@ -33,7 +33,7 @@ func TestClientErrorCompatibilityPersistsAndControlsStreamClose(t *testing.T) {
 		if got := s.ClientErrorMessage(err); got != want {
 			t.Fatalf("compatibility=%v: client error %q, want %q", enabled, got, want)
 		}
-		s.closeOutputStream("client-stream", &LogEntry{ErrorPhase: "after_output"}, err)
+		s.closeOutputStream("client-stream", "", &LogEntry{ErrorPhase: "after_output"}, err)
 		wantStream := want
 		if !enabled {
 			wantStream += ": unexpected EOF"
@@ -72,7 +72,7 @@ func TestStreamCooldownMarkersPreserveOtherFaults(t *testing.T) {
 		s.cfg.ClientRetryCompatibility = enabled
 		for _, status := range []int{401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": "original upstream error"}, time.Now())
-			s.closeOutputStream("client-stream", &LogEntry{}, err)
+			s.closeOutputStream("client-stream", "", &LogEntry{}, err)
 			if h.clientError != safeError(err) {
 				t.Fatalf("compatibility=%v status=%d changed unrelated fault: %q", enabled, status, h.clientError)
 			}
@@ -81,17 +81,17 @@ func TestStreamCooldownMarkersPreserveOtherFaults(t *testing.T) {
 		// the known LiteLLM truncation signature.
 		for _, status := range []int{401, 402, 403, 429} {
 			err := classifyUpstreamError(status, nil, map[string]any{"error": transportIncompleteFixture}, time.Now())
-			s.closeOutputStream("client-stream", &LogEntry{}, err)
+			s.closeOutputStream("client-stream", "", &LogEntry{}, err)
 			if h.clientError != safeError(err) {
 				t.Fatalf("compatibility=%v status=%d acquired a transport exemption", enabled, status)
 			}
 		}
 		err := fmt.Errorf("wrapped: %w", streamIdleTimeout(10*time.Second))
-		s.closeOutputStream("client-stream", &LogEntry{}, err)
+		s.closeOutputStream("client-stream", "", &LogEntry{}, err)
 		if strings.Count(h.clientError, "i/o timeout") != 1 || !strings.Contains(h.clientError, "HTTP 502:") {
 			t.Fatalf("compatibility=%v: idle error lost marker or status: %q", enabled, h.clientError)
 		}
-		s.closeOutputStream("client-stream", &LogEntry{}, nil)
+		s.closeOutputStream("client-stream", "", &LogEntry{}, nil)
 		if h.clientError != "" {
 			t.Fatal("successful close acquired an error")
 		}

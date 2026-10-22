@@ -518,7 +518,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		s.logErrorDetails(&entry, &attempt, err)
 		entry.Attempts = append(entry.Attempts, attempt)
 		if upstreamOpened {
-			s.closeOutputStream(r.StreamID, &entry, err)
+			s.closeOutputStream(r.StreamID, str(r.Metadata["request_path"]), &entry, err)
 		}
 		s.appendLog(entry)
 		return nil, err
@@ -543,7 +543,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		_, e = s.readJSON(us)
 		return failEarly(e)
 	}
-	output := &outputStreamLifecycle{service: s, id: r.StreamID}
+	output := &outputStreamLifecycle{service: s, id: r.StreamID, requestPath: str(r.Metadata["request_path"])}
 	us.output = output
 	// Preserve the existing RPC handoff separately from acknowledged downstream
 	// emits. Errors before the handoff still return through the RPC envelope.
