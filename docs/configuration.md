@@ -44,6 +44,29 @@ DeepSeek 模型首次设置时默认填入 `deepseek`，其他模型保持自动
 
 provider 策略默认是「插件配置优先」，客户端传入的 provider 字段会被忽略。选择「客户端优先」后，客户端传入的字段优先生效，其余字段由插件配置补齐。最终的 `only` 允许列表与 `order` 顺序提示会同时写入 `provider` 和 `providerOptions.gateway`，兼容读取不同路由字段的上游路径。探测候选时会移除这两种字段，避免已有允许列表限制探测结果。
 
+## 联网工具注入（server_tools）
+
+「模型映射」每行右侧的「联网」按钮打开该模型的工具勾选：勾中的工具会在 bridge 构造上游请求体时追加到 `tools`，由上游网关执行（模型发起、上游检索、结果直接回灌给模型）。客户端不必自己声明搜索工具，也不会收到 `tool_calls` 或搜索结果原文。
+
+可选的工具名由 Cline API 背后的 AI Gateway 提供：`vercel:exa_search`、`vercel:perplexity_search`、`vercel:parallel_search`、`vercel:tako_search`、`vercel:browserbase_search` 与 `vercel:browserbase_fetch`。界面上另有「其他类型」输入框，可用逗号写上游新增的名字；名字写错时上游返回 400，插件按普通上游错误处理。
+
+存储格式仍是 `server_tools` 规则，因此也可以直接写进 YAML 或 `settings.json`；`models` 支持 `*` 通配：
+
+```yaml
+server_tools:
+  - models: ["deepseek-v4.1-flash-*"]
+    tools:
+      - type: vercel:exa_search
+      - type: vercel:tako_search
+```
+
+读取时插件把规则折算成每个已配置模型的实际工具集，所以通配规则写下的模型也会在界面上显示为已勾选。保存一个模型时会把整份视图重写成逐模型规则（`models: [<该模型 ID>]`）：手写的通配规则在这一步被展开成具体模型，已有且保留选中的工具仍保留完整参数，其他模型的工具定义也保持原样。清空勾选等于删除该模型的规则；清空全部工具后，重载也保留清空状态。
+
+- `GET /v0/management/clinepassbridge/models/server-tools` 返回 `{"models":{<模型 ID>:[类型…]},"catalog":[…]}`
+- `PUT /v0/management/clinepassbridge/models/server-tools` 提交 `{"model":"<模型 ID>","tools":["vercel:exa_search"]}`，只改这一个模型；未知模型返回 404，类型去重、空白忽略
+
+注入只影响输入侧：客户端的 `tools` 原样保留，客户端已声明的同名工具不会重复追加。客户端函数与上述内建工具同名时（例如 `function.name: exa_search`），优先保留客户端函数并跳过对应的内建工具注入，避免上游名称冲突。规则不匹配的模型（例如 `mimo-v2.6-pro`）行为完全不变。搜索结果只进入模型上下文，客户端拿不到来源列表，需要可核验链接时用 `web_search` 类工具自行实现，或让模型在回答里复述 URL。
+
 ## 思考强度映射
 
 在「模型映射 → 思考强度映射」选择模型，添加规则并保存。每个模型独立配置，默认关闭；多个别名即使指向同一上游，也有各自的规则。

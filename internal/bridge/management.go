@@ -22,13 +22,13 @@ const apiBase = "/v0/management/clinepassbridge"
 func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	s.startUsageSampler()
 	routes := []map[string]string{}
-	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage", "scheduling", "egress", "error-rules"} {
+	for _, p := range []string{"status", "logs", "statistics", "models", "config", "credentials", "credentials/usage", "scheduling", "egress", "error-rules", "models/server-tools"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
 	for _, p := range []string{"models/refresh", "models/test", "models/providers", "credentials", "credentials/clear-affinity", "statistics/reset", "scheduling/reset", "error-rules/sync", "error-rules/reset"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling/credential", "egress", "error-rules"} {
+	for _, p := range []string{"models", "models/reasoning", "config", "credentials", "scheduling/credential", "egress", "error-rules", "models/server-tools"} {
 		routes = append(routes, map[string]string{"Method": "PUT", "Path": apiBase + "/" + p})
 	}
 	routes = append(routes, map[string]string{"Method": "DELETE", "Path": apiBase + "/credentials"})
@@ -70,6 +70,13 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			}
 			b = []byte(strings.ReplaceAll(string(b), "/*__ERROR_RULES_MODULE__*/", string(errorRulesJS)))
 		}
+		if strings.Contains(string(b), "/*__MODEL_TOOLS_MODULE__*/") {
+			serverToolsJS, err := ui.ReadFile("ui/model-tools.js")
+			if err != nil {
+				return nil, err
+			}
+			b = []byte(strings.ReplaceAll(string(b), "/*__MODEL_TOOLS_MODULE__*/", string(serverToolsJS)))
+		}
 		if strings.Contains(string(b), "/*__RELEASE_NOTICE_MODULE__*/") {
 			releaseNoticeJS, err := ui.ReadFile("ui/release-notice.js")
 			if err != nil {
@@ -83,11 +90,15 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(404, map[string]any{"error": "not found"})
 	}
 	p := strings.TrimPrefix(r.Path, apiBase)
-	if r.Method == "PUT" && (p == "/config" || p == "/models" || p == "/models/reasoning") {
+	if r.Method == "PUT" && (p == "/config" || p == "/models" || p == "/models/reasoning" || p == "/models/server-tools") {
 		s.configMu.Lock()
 		defer s.configMu.Unlock()
 	}
 	switch r.Method + " " + p {
+	case "GET /models/server-tools":
+		return s.modelServerToolsResponse()
+	case "PUT /models/server-tools":
+		return s.saveModelServerTools(r)
 	case "GET /error-rules", "PUT /error-rules", "POST /error-rules/sync", "POST /error-rules/reset":
 		return s.errorRulesManagement(r)
 	case "GET /scheduling":
