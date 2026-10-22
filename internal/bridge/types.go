@@ -284,18 +284,24 @@ func (c Config) pinnedProviders(alias string) []string {
 }
 
 type Attempt struct {
-	ErrorKind           string `json:"error_kind,omitempty"`
-	UpstreamHTTPStatus  int    `json:"upstream_http_status,omitempty"`
-	UpstreamErrorStatus int    `json:"upstream_error_status,omitempty"`
-	UpstreamSkipped     bool   `json:"upstream_skipped,omitempty"`
-	Status              int    `json:"status"`
-	Mode                string `json:"mode"`
-	Provider            string `json:"provider"`
-	ProviderSource      string `json:"provider_source"`
-	DurationMS          int64  `json:"duration_ms"`
-	Error               string `json:"error,omitempty"`
+	ServerTools             []string         `json:"server_tools,omitempty"`
+	ServerToolCalls         map[string]int64 `json:"server_tool_calls,omitempty"`
+	ServerToolCallsReported bool             `json:"server_tool_calls_reported,omitempty"`
+	ErrorKind               string           `json:"error_kind,omitempty"`
+	UpstreamHTTPStatus      int              `json:"upstream_http_status,omitempty"`
+	UpstreamErrorStatus     int              `json:"upstream_error_status,omitempty"`
+	UpstreamSkipped         bool             `json:"upstream_skipped,omitempty"`
+	Status                  int              `json:"status"`
+	Mode                    string           `json:"mode"`
+	Provider                string           `json:"provider"`
+	ProviderSource          string           `json:"provider_source"`
+	DurationMS              int64            `json:"duration_ms"`
+	Error                   string           `json:"error,omitempty"`
 }
 type LogEntry struct {
+	ServerTools                 []string             `json:"server_tools,omitempty"`
+	ServerToolCalls             map[string]int64     `json:"server_tool_calls,omitempty"`
+	ServerToolCallsReported     bool                 `json:"server_tool_calls_reported,omitempty"`
 	StreamDiagnostics           *StreamDiagnostics   `json:"stream_diagnostics,omitempty"`
 	ErrorPhase                  string               `json:"error_phase,omitempty"`
 	DownstreamStarted           *bool                `json:"downstream_started,omitempty"`
