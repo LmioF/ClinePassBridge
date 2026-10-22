@@ -32,27 +32,44 @@ func (c Config) effectiveServerTools() map[string][]string {
 	for _, model := range c.Models {
 		seen := map[string]bool{}
 		var types []string
-		for _, rule := range c.ServerTools {
-			if !serverToolRuleMatches(&rule, model.ID) {
+		for _, tool := range c.resolvedServerTools(model.ID) {
+			kind := strings.TrimSpace(str(tool["type"]))
+			if kind == "" || seen[kind] {
 				continue
 			}
-			for _, tool := range rule.Tools {
-				kind := strings.TrimSpace(str(tool["type"]))
-				if kind == "" || seen[kind] {
-					continue
-				}
-				seen[kind] = true
-				types = append(types, kind)
-			}
+			seen[kind] = true
+			types = append(types, kind)
 		}
 		out[model.ID] = types
 	}
 	return out
 }
 
+// Resolve the complete objects using the same first-definition-wins identity
+// as request injection. A type can have several independently named tools.
+func (c Config) resolvedServerTools(model string) []map[string]any {
+	var tools []map[string]any
+	seen := map[string]bool{}
+	for _, rule := range c.ServerTools {
+		if !serverToolRuleMatches(&rule, model) {
+			continue
+		}
+		for _, tool := range rule.Tools {
+			key := serverToolKey(tool)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
 // flattenServerToolRules rewrites the rules as one exact rule per model that has
 // tools. Editing one model in the console therefore commits the whole resolved
-// view, which keeps what the operator sees and what requests receive identical.
+// view. Existing types retain all their complete objects; only newly selected
+// types get a bare declaration.
 func (c *Config) flattenServerToolRules(effective map[string][]string) {
 	rules := make([]ServerToolRule, 0, len(effective))
 	for _, model := range c.Models {
@@ -60,9 +77,23 @@ func (c *Config) flattenServerToolRules(effective map[string][]string) {
 		if len(types) == 0 {
 			continue
 		}
-		tools := make([]map[string]any, 0, len(types))
+		selected := make(map[string]bool, len(types))
 		for _, kind := range types {
-			tools = append(tools, map[string]any{"type": kind})
+			selected[kind] = true
+		}
+		tools := make([]map[string]any, 0, len(types))
+		retained := map[string]bool{}
+		for _, tool := range c.resolvedServerTools(model.ID) {
+			kind := strings.TrimSpace(str(tool["type"]))
+			if selected[kind] {
+				tools = append(tools, tool)
+				retained[kind] = true
+			}
+		}
+		for _, kind := range types {
+			if !retained[kind] {
+				tools = append(tools, map[string]any{"type": kind})
+			}
 		}
 		rules = append(rules, ServerToolRule{Models: []string{model.ID}, Tools: tools})
 	}

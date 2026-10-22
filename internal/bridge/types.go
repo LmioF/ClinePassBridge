@@ -136,7 +136,7 @@ type Config struct {
 	DataDir                  string                  `json:"data_dir" yaml:"data_dir"`
 	BaseURL                  string                  `json:"base_url" yaml:"base_url"`
 	Models                   []Model                 `json:"models" yaml:"models"`
-	ServerTools              []ServerToolRule        `json:"server_tools,omitempty" yaml:"server_tools,omitempty"`
+	ServerTools              []ServerToolRule        `json:"server_tools" yaml:"server_tools,omitempty"`
 	NonstreamMode            string                  `json:"nonstream_mode" yaml:"nonstream_mode"`
 	ClientRetryCompatibility bool                    `json:"client_retry_compatibility" yaml:"client_retry_compatibility"`
 	StreamIdleCutoffEnabled  bool                    `json:"stream_idle_cutoff_enabled" yaml:"stream_idle_cutoff_enabled"`

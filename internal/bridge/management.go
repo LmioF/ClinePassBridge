@@ -90,7 +90,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(404, map[string]any{"error": "not found"})
 	}
 	p := strings.TrimPrefix(r.Path, apiBase)
-	if r.Method == "PUT" && (p == "/config" || p == "/models" || p == "/models/reasoning") {
+	if r.Method == "PUT" && (p == "/config" || p == "/models" || p == "/models/reasoning" || p == "/models/server-tools") {
 		s.configMu.Lock()
 		defer s.configMu.Unlock()
 	}

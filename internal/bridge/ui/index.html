@@ -851,12 +851,12 @@
     <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button" data-icon="close">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled data-icon="check">应用更改</button></div>
   </dialog>
   <dialog id="modelToolsDialog" aria-labelledby="modelToolsTitle" aria-describedby="modelToolsHint">
-    <form method="dialog" id="modelToolsForm">
+    <form id="modelToolsForm">
       <div class="panel-head"><div><h2 id="modelToolsTitle">联网工具</h2><p class="panel-hint mono" id="modelToolsModel"></p></div><button class="button icon ghost" type="button" id="closeModelTools" data-icon="close" aria-label="关闭"></button></div>
       <p class="panel-hint" id="modelToolsHint">勾选的工具会在 bridge 发出请求时追加到 <code>tools</code>，由上游执行；搜索结果只进入模型上下文，客户端拿不到来源列表，也不会收到 tool_calls。费用按上游每次请求计。</p>
       <div class="model-tool-list" id="modelToolsList"></div>
       <label class="model-tool-custom">其他类型 <input class="control mono" id="modelToolsCustom" type="text" placeholder="vercel:other_tool，多个用逗号分隔" aria-label="其他工具类型"></label>
-      <div class="dialog-actions"><span class="inline-state" id="modelToolsState" role="status"></span><button class="button compact" type="button" id="cancelModelTools">取消</button><button class="button compact primary" type="button" id="saveModelTools" data-icon="save">保存</button></div>
+      <div class="dialog-actions"><span class="inline-state" id="modelToolsState" role="status"></span><button class="button compact" type="button" id="retryModelTools" data-icon="refresh" hidden>重试</button><button class="button compact" type="button" id="cancelModelTools">取消</button><button class="button compact primary" type="submit" id="saveModelTools" data-icon="save" disabled>保存</button></div>
     </form>
   </dialog>
   <dialog id="errorRulesDialog" aria-labelledby="errorRulesTitle">
@@ -2177,6 +2177,7 @@
         $('logRetention').value = present(config?.log_retention) ? config.log_retention : 500;
         $('debugEnabled').checked = config?.debug === true;
         renderModels(models);
+        await loadModelServerTools();
         resetModelForm();
         renderCredentials(credentials);
         if (!$('credentialsPanel').hidden) loadCredentialScheduling();

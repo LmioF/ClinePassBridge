@@ -70,6 +70,19 @@ func serverToolKey(tool map[string]any) string {
 	return kind + "\x00" + name
 }
 
+// builtinServerToolFunctionName names the function reserved by a known gateway
+// tool. Unknown types may use a different namespace and must not be inferred.
+func builtinServerToolFunctionName(tool map[string]any) string {
+	kind := strings.TrimSpace(str(tool["type"]))
+	switch kind {
+	case "vercel:exa_search", "vercel:perplexity_search", "vercel:parallel_search",
+		"vercel:tako_search", "vercel:browserbase_search", "vercel:browserbase_fetch":
+		return strings.TrimPrefix(kind, "vercel:")
+	default:
+		return ""
+	}
+}
+
 // modelPatternMatches is the glob matcher the rules use; only '*' is special.
 func modelPatternMatches(pattern, model string) bool {
 	pattern = strings.TrimSpace(pattern)
@@ -110,7 +123,8 @@ func modelPatternMatches(pattern, model string) bool {
 // applyServerTools appends the configured server tools for model to the outgoing
 // request body. Tools the caller already declared are left alone: an identical
 // type (and name) is skipped rather than duplicated, so a client keeps its own
-// definitions and ordering.
+// definitions and ordering. A client function also takes precedence over a
+// built-in gateway tool that reserves the same function name.
 func (s *Service) applyServerTools(j map[string]any, model string) {
 	cfg := s.config()
 	if len(cfg.ServerTools) == 0 || strings.TrimSpace(model) == "" {
@@ -118,10 +132,20 @@ func (s *Service) applyServerTools(j map[string]any, model string) {
 	}
 	tools := list(j["tools"])
 	existing := make(map[string]bool, len(tools))
+	clientFunctions := make(map[string]bool)
 	for _, entry := range tools {
 		if tool := object(entry); tool != nil {
 			if key := serverToolKey(tool); key != "" {
 				existing[key] = true
+			}
+			if strings.TrimSpace(str(tool["type"])) == "function" {
+				name := strings.TrimSpace(str(object(tool["function"])["name"]))
+				if name == "" {
+					name = strings.TrimSpace(str(tool["name"]))
+				}
+				if name != "" {
+					clientFunctions[name] = true
+				}
 			}
 		}
 	}
@@ -134,6 +158,9 @@ func (s *Service) applyServerTools(j map[string]any, model string) {
 		for _, tool := range rule.Tools {
 			key := serverToolKey(tool)
 			if key == "" || existing[key] {
+				continue
+			}
+			if name := builtinServerToolFunctionName(tool); name != "" && clientFunctions[name] {
 				continue
 			}
 			tools = append(tools, tool)
