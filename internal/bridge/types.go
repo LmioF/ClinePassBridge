@@ -28,6 +28,9 @@ const (
 // stay reviewable in the UI.
 const maxModelProviders = 8
 
+// The gateway defines only a handful of capabilities; the same bound applies.
+const maxModelCapabilities = 8
+
 // localBackoffLabel is the label the UI shows, and filters by, for a request the
 // plugin suppressed locally. Such a request never reached an upstream, so it has
 // no provider of its own.
@@ -130,6 +133,9 @@ type Model struct {
 	ID               string                  `json:"id" yaml:"id"`
 	UpstreamID       string                  `json:"upstream_id" yaml:"upstream_id"`
 	Providers        []string                `json:"providers" yaml:"providers"`
+	// Capabilities is sent as providerOptions.gateway.has: the gateway only
+	// routes to provider models that have every listed capability.
+	Capabilities []string `json:"capabilities" yaml:"capabilities"`
 }
 type Config struct {
 	ReasoningMapping         *ReasoningMappingConfig `json:"reasoning_mapping,omitempty" yaml:"reasoning_mapping,omitempty"` // Legacy global mapping; migrated during validation.
@@ -149,7 +155,7 @@ type Config struct {
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{{ID: "deepseek-v4.1-flash-1017", UpstreamID: "cline-pass/deepseek-v4.1-flash-1017", Providers: []string{"deepseek"}}}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: false, StreamIdleTimeoutSeconds: 20, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 64 << 20}
+	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{{ID: "deepseek-v4.1-flash-1017", UpstreamID: "cline-pass/deepseek-v4.1-flash-1017", Providers: []string{"deepseek"}, Capabilities: defaultDeepSeekCapabilities()}}, NonstreamMode: "stream-aggregate", ClientRetryCompatibility: true, StreamIdleCutoffEnabled: false, StreamIdleTimeoutSeconds: 20, ProviderPolicy: ProviderPolicyConfig, TimeoutSeconds: 600, LogRetention: 1000, MaxResponseBytes: 64 << 20}
 }
 
 // Scalar settings support partial updates, but supplied collections replace the
@@ -253,6 +259,26 @@ func (c *Config) validate() error {
 			pinned[slug] = true
 			m.Providers[n] = slug
 		}
+		// Same rule as providers: only a never-set field is defaulted, so an
+		// operator who cleared the filter keeps it cleared.
+		if m.Capabilities == nil {
+			m.Capabilities = defaultCapabilitiesFor(m.ID, m.UpstreamID, m.Providers)
+		}
+		if len(m.Capabilities) > maxModelCapabilities {
+			return fail(400, "a model can require at most 8 capabilities")
+		}
+		required := map[string]bool{}
+		for n, raw := range m.Capabilities {
+			capability := strings.ToLower(strings.TrimSpace(raw))
+			if capability == "" || strings.ContainsAny(capability, " \r\n\t") {
+				return fail(400, "capabilities must be nonempty values without whitespace")
+			}
+			if required[capability] {
+				return fail(400, "capabilities must be unique within a model")
+			}
+			required[capability] = true
+			m.Capabilities[n] = capability
+		}
 	}
 	for i := range c.ServerTools {
 		if err := c.ServerTools[i].validate(); err != nil {
@@ -272,12 +298,41 @@ func defaultProvidersFor(id, upstreamID string) []string {
 	return nil
 }
 
+// defaultDeepSeekCapabilities is the filter observed (2026-10-23) to make a
+// Cline Pass key honour its `only` list: without it the key's private route
+// ignores the pin, while requiring these capabilities moves the request onto a
+// route that applies it. The gateway's internals are not public, so this stays
+// an editable default rather than a hard-coded rule.
+func defaultDeepSeekCapabilities() []string {
+	return []string{"vision", "implicit-caching"}
+}
+
+// defaultCapabilitiesFor seeds the filter for DeepSeek models that are pinned;
+// an unpinned model keeps plain automatic routing.
+func defaultCapabilitiesFor(id, upstreamID string, providers []string) []string {
+	if len(providers) > 0 && strings.Contains(strings.ToLower(id+" "+upstreamID), "deepseek") {
+		return defaultDeepSeekCapabilities()
+	}
+	return []string{}
+}
+
 // pinnedProviders returns the configured allow-list for a client-facing model
 // alias, preserving the configured order as the priority order.
 func (c Config) pinnedProviders(alias string) []string {
 	for _, m := range c.Models {
 		if m.ID == alias {
 			return append([]string{}, m.Providers...)
+		}
+	}
+	return nil
+}
+
+// requiredCapabilities returns the configured gateway `has` filter for a
+// client-facing model alias.
+func (c Config) requiredCapabilities(alias string) []string {
+	for _, m := range c.Models {
+		if m.ID == alias {
+			return append([]string{}, m.Capabilities...)
 		}
 	}
 	return nil

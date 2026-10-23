@@ -49,10 +49,13 @@ func TestProviderDiscoveryIgnoresConfiguredPins(t *testing.T) {
 				t.Fatalf("upstream requests = %d, want 1", len(host.bodies))
 			}
 			probe := host.bodies[0]
-			for _, key := range []string{"provider", "providerOptions"} {
-				if _, present := probe[key]; present {
-					t.Errorf("provider discovery retained %s: %s", key, jsonBytes(probe))
-				}
+			if _, present := probe["provider"]; present {
+				t.Errorf("provider discovery retained provider: %s", jsonBytes(probe))
+			}
+			// The pin is dropped but the capability filter is kept: it decides
+			// which route the key lands on.
+			if got := string(jsonBytes(probe["providerOptions"])); got != `{"gateway":{"has":["vision","implicit-caching"]}}` {
+				t.Errorf("provider discovery providerOptions = %s, want only the capability filter", got)
 			}
 			if probe["model"] != "cline-pass/deepseek-v4.1-flash" || probe["stream"] != true || probe["max_tokens"] != float64(16) {
 				t.Errorf("unexpected probe settings: %s", jsonBytes(probe))

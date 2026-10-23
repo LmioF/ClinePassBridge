@@ -210,8 +210,8 @@ func TestClientProviderRoutingPreservesExplicitEmptyFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["novita"]},"providerOptions":{"gateway":{"only":[],"order":null}}}`)
-	if got := string(jsonBytes(gateway)); got != `{"only":[],"order":null}` {
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"provider":{"only":["novita"],"order":["novita"]},"providerOptions":{"gateway":{"only":[],"order":null,"has":[]}}}`)
+	if got := string(jsonBytes(gateway)); got != `{"has":[],"only":[],"order":null}` {
 		t.Errorf("gateway = %s, want explicit empty fields instead of fallback values", got)
 	}
 }
@@ -515,5 +515,124 @@ func TestSuccessfulProviderIsNotOverwritten(t *testing.T) {
 	logErrorDetails(&entry, &attempt, err)
 	if entry.Provider != "wafer" || attempt.Provider != "wafer" {
 		t.Errorf("provider = %q/%q, want the earlier value preserved", entry.Provider, attempt.Provider)
+	}
+}
+
+func TestPinnedDeepSeekModelRequiresDefaultCapabilities(t *testing.T) {
+	// The capability filter is what makes a Pass key honour `only`, so a pinned
+	// DeepSeek model sends both. `has` is gateway-only and never reaches the
+	// top-level provider form (gatewayOf checks that).
+	s, err := registerService(t, modelConfig(t, ""))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+	if got := strings.Join(slugs(gateway["only"]), ","); got != "deepseek" {
+		t.Errorf("only = %q, want deepseek", got)
+	}
+	if got := strings.Join(slugs(gateway["has"]), ","); got != "vision,implicit-caching" {
+		t.Errorf("has = %q, want vision,implicit-caching", got)
+	}
+	if got := strings.Join(s.config().Models[0].Capabilities, ","); got != "vision,implicit-caching" {
+		t.Errorf("seeded capabilities = %q, want them persisted on the model", got)
+	}
+}
+
+func TestCapabilitiesAreNotSeededWithoutAPinOrForOtherModels(t *testing.T) {
+	for name, config := range map[string]string{
+		"unpinned deepseek":   "    providers: []\n",
+		"pinned non-deepseek": "    providers: [wafer]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			yaml := modelConfig(t, config)
+			if name == "pinned non-deepseek" {
+				yaml = strings.ReplaceAll(strings.ReplaceAll(yaml, "deepseek-flash", "kimi"), "cline-pass/deepseek-v4.1-flash", "cline-pass/kimi-k3")
+			}
+			s, err := registerService(t, yaml)
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			model := s.config().Models[0]
+			if model.Capabilities == nil || len(model.Capabilities) != 0 {
+				t.Fatalf("capabilities = %#v, want an explicit empty list", model.Capabilities)
+			}
+			host := &capturingHost{plan: ssePlan(simpleSSE())}
+			s.SetHost(host.call)
+			if _, err := s.Handle("executor.execute", requestForModel(model.ID, `{"messages":[{"role":"user","content":"hello"}]}`)); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if _, ok := object(object(host.bodies[0]["providerOptions"])["gateway"])["has"]; ok {
+				t.Errorf("unexpected has filter: %s", jsonBytes(host.bodies[0]))
+			}
+		})
+	}
+}
+
+func TestClearedCapabilitiesSendOnlyThePin(t *testing.T) {
+	s, err := registerService(t, modelConfig(t, "    providers: [deepseek]\n    capabilities: []\n"))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+	if got := string(jsonBytes(gateway)); got != `{"only":["deepseek"],"order":["deepseek"]}` {
+		t.Errorf("gateway = %s, want the pin without a capability filter", got)
+	}
+}
+
+func TestConfiguredCapabilitiesWithoutPin(t *testing.T) {
+	s, err := registerService(t, modelConfig(t, "    providers: []\n    capabilities: [\" Tool-Use \", \"!quantization:fp8\"]\n"))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	body := upstreamBodyOf(t, s, `{"messages":[{"role":"user","content":"hello"}]}`)
+	if _, ok := body["provider"]; ok {
+		t.Errorf("has alone must not create a top-level provider form: %s", jsonBytes(body))
+	}
+	if got := string(jsonBytes(body["providerOptions"])); got != `{"gateway":{"has":["tool-use","!quantization:fp8"]}}` {
+		t.Errorf("providerOptions = %s, want the normalised capability filter only", got)
+	}
+}
+
+func TestCapabilityPolicy(t *testing.T) {
+	cases := []struct {
+		policy, client, want string
+	}{
+		// The caller's own filter wins under client policy, even when empty.
+		{"client", `{"has":["reasoning"]}`, "reasoning"},
+		{"client", `{"has":[]}`, ""},
+		{"client", `{"only":["alibaba"]}`, "vision,implicit-caching"},
+		// Under config policy the caller's filter is dropped like its pin.
+		{"config", `{"has":["reasoning"]}`, "vision,implicit-caching"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.policy+" "+tt.client, func(t *testing.T) {
+			s, err := registerService(t, modelConfig(t, "provider_policy: "+tt.policy+"\n"))
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			gateway := gatewayOf(t, s, `{"messages":[{"role":"user","content":"hello"}],"providerOptions":{"gateway":`+tt.client+`}}`)
+			if got := strings.Join(slugs(gateway["has"]), ","); got != tt.want {
+				t.Errorf("has = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCapabilityConfigValidation(t *testing.T) {
+	cases := []struct {
+		name, extra, reason string
+	}{
+		{"duplicate", "    capabilities: [vision, VISION]\n", "unique"},
+		{"empty entry", "    capabilities: [\"\"]\n", "nonempty"},
+		{"blank entry", "    capabilities: [\"tool use\"]\n", "whitespace"},
+		{"too many", "    capabilities: [a, b, c, d, e, f, g, h, i]\n", "at most 8"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := registerService(t, modelConfig(t, tt.extra))
+			if err == nil || !strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("error = %v, want rejection mentioning %q", err, tt.reason)
+			}
+		})
 	}
 }

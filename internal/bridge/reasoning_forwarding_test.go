@@ -69,10 +69,10 @@ func TestProviderRoutingPreservesModelOptions(t *testing.T) {
 	}{
 		{"config_empty_no_gateway", "config", "[]", "", ""},
 		{"config_empty_client_gateway", "config", "[]", clientGateway, ""},
-		{"config_pinned_overrides_gateway", "config", "[deepseek, wafer]", clientGateway, `{"only":["deepseek","wafer"],"order":["deepseek","wafer"]}`},
+		{"config_pinned_overrides_gateway", "config", "[deepseek, wafer]", clientGateway, `{"has":["vision","implicit-caching"],"only":["deepseek","wafer"],"order":["deepseek","wafer"]}`},
 		{"client_empty_no_gateway", "client", "[]", "", ""},
 		{"client_empty_keeps_gateway", "client", "[]", clientGateway, clientGateway},
-		{"client_pinned_fills_missing_order", "client", "[deepseek, wafer]", `{"only":["alibaba"]}`, `{"only":["alibaba"],"order":["deepseek","wafer"]}`},
+		{"client_pinned_fills_missing_order", "client", "[deepseek, wafer]", `{"only":["alibaba"]}`, `{"has":["vision","implicit-caching"],"only":["alibaba"],"order":["deepseek","wafer"]}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s, err := registerService(t, modelConfig(t, "    providers: "+tt.providers+"\nprovider_policy: "+tt.policy+"\nnonstream_mode: stream-aggregate\n"))

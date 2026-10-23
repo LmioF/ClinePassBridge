@@ -65,9 +65,14 @@ func (s *Service) discoverProviders(r ManagementRequest) (any, error) {
 	// The probe asks what this model *can* be pinned to, so it must not carry
 	// the model's own pin: a request pinned to one provider reports no
 	// alternatives, which would make an already-pinned model look unpinnable.
+	// The capability filter stays: it decides which route the key lands on, and
+	// so which candidates a later pinned request can actually reach.
 	if err == nil {
 		delete(j, "provider")
 		delete(j, "providerOptions")
+		if capabilities := cfg.requiredCapabilities(in.Model); len(capabilities) > 0 {
+			j["providerOptions"] = map[string]any{"gateway": map[string]any{"has": capabilities}}
+		}
 	}
 	entry := s.newLog(req, credential, upstream)
 	s.applyReasoningMapping(j, &entry)

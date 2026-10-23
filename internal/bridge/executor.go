@@ -57,9 +57,11 @@ func (s *Service) prepareWithCredential(r ExecutorRequest, c Credential) (map[st
 // applyProviderRouting resolves provider preferences once, then writes the
 // allow-list (`only`) and priority order (`order`) to both routing forms: some
 // upstream request paths read provider, while others read providerOptions.gateway.
+// The capability filter (`has`) is gateway-only and goes to that form alone.
 func (s *Service) applyProviderRouting(j map[string]any, alias string) {
 	cfg := s.config()
 	pinned := cfg.pinnedProviders(alias)
+	capabilities := cfg.requiredCapabilities(alias)
 	// Merge caller hints before applying the configured policy. Gateway fields
 	// take precedence over the top-level shorthand when both are present.
 	gateway := map[string]any{}
@@ -83,6 +85,9 @@ func (s *Service) applyProviderRouting(j map[string]any, alias string) {
 	}
 	if _, ok := gateway["order"]; !ok && len(pinned) > 0 {
 		gateway["order"] = pinned
+	}
+	if _, ok := gateway["has"]; !ok && len(capabilities) > 0 {
+		gateway["has"] = capabilities
 	}
 	// Other provider namespaces in providerOptions must survive, but the
 	// gateway sub-key is owned by this function from here on.

@@ -630,7 +630,7 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-head"><div><h2>模型上游白名单</h2><p class="panel-hint" id="pinInputHint">为每个模型设置允许使用的上游，以逗号或空格分隔，也可点击探测结果追加。</p></div><div class="pin-save-feedback"><span class="pin-save-status" id="pinModelsState" role="status" aria-live="polite">自动保存</span><button class="button compact" id="retryPinModels" type="button" data-icon="refresh" hidden>重试</button></div></div>
+        <div class="panel-head"><div><h2>模型上游白名单</h2><p class="panel-hint" id="pinInputHint">为每个模型设置允许使用的上游和能力过滤，以逗号或空格分隔，也可点击探测结果追加。</p></div><div class="pin-save-feedback"><span class="pin-save-status" id="pinModelsState" role="status" aria-live="polite">自动保存</span><button class="button compact" id="retryPinModels" type="button" data-icon="refresh" hidden>重试</button></div></div>
         <dl class="pin-semantics" id="pinSemantics">
           <div><dt>留空 · 自动路由</dt><dd>由网关自动选择上游。</dd></div>
           <div><dt>一个上游 · 固定使用</dt><dd>只使用该上游；上游满容量时请求会失败。</dd></div>
@@ -1604,7 +1604,7 @@
     }
     function renderModels(data, refreshPins = true) {
       const previousKeys = state.models.map(modelKey).join('\n');
-      state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ ...model, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
+      state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ ...model, providers: Array.isArray(model.providers) ? [...model.providers] : [], ...(Array.isArray(model.capabilities) ? { capabilities: [...model.capabilities] } : {}) })) : [];
       for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
       renderProviderOptions();
       renderModelRows();
@@ -1620,7 +1620,7 @@
       await loadStatus();
     }
     const modelKey = (model) => JSON.stringify([model.id, model.upstream_id]);
-    const modelTestKey = (model, credential = $('modelTestCredential').value, reasoning = $('modelTestReasoning').value) => JSON.stringify([model.id, model.upstream_id, credential, reasoning, model.providers, state.config?.provider_policy, model.reasoning_mapping, reasoningMappingRevision]);
+    const modelTestKey = (model, credential = $('modelTestCredential').value, reasoning = $('modelTestReasoning').value) => JSON.stringify([model.id, model.upstream_id, credential, reasoning, model.providers, model.capabilities, state.config?.provider_policy, model.reasoning_mapping, reasoningMappingRevision]);
     function modelTestHTML(test) {
       if (!test) return '';
       if (test.pending) return '<div class="model-test-result"><span class="subtext" role="status">正在连接 Cline，等待完整响应…</span></div>';
@@ -1637,7 +1637,7 @@
       const credential = $('modelTestCredential').value;
       $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => {
         const test = modelTestResults.get(modelTestKey(model));
-        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact model-tools" type="button" data-index="${index}" title="为这个模型注入上游内置搜索工具；客户端不必自己声明">${buttonIcon('search')}联网${modelToolsLabel(model.id)}</button><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${buttonIcon('test')}${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">${buttonIcon('edit')}编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">${buttonIcon('trash')}删除</button></div>${modelTestHTML(test)}</div>`;
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}${model.providers?.length ? ` · 固定: ${esc(model.providers.join(', '))}` : ''}${model.capabilities?.length ? ` · 能力: ${esc(model.capabilities.join(', '))}` : ''}</div></div><div class="row-actions"><button class="button compact model-tools" type="button" data-index="${index}" title="为这个模型注入上游内置搜索工具；客户端不必自己声明">${buttonIcon('search')}联网${modelToolsLabel(model.id)}</button><button class="button compact test-model" type="button" data-index="${index}" ${!credential || test?.pending || reasoningMappingBusy ? 'disabled' : ''}>${buttonIcon('test')}${test?.pending ? '测试中…' : '测试模型'}</button><button class="button compact edit-model" type="button" data-index="${index}">${buttonIcon('edit')}编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">${buttonIcon('trash')}删除</button></div>${modelTestHTML(test)}</div>`;
       }).join('') : '<div class="empty">暂无模型映射</div>';
       syncPinModelTests();
     }
@@ -1655,6 +1655,12 @@
       }
     }
     const parseProviders = (value) => [...new Set(value.split(/[,\s]+/).filter(Boolean).map((provider) => provider.toLowerCase()))];
+    // The capability filter (gateway `has`) autosaves with the allow-list; its
+    // drafts sit beside the provider drafts under a prefixed key.
+    const recommendedCapabilities = ['vision', 'implicit-caching'];
+    const capabilityKey = (model) => `has:${modelKey(model)}`;
+    const draftKey = (input) => input.dataset.field === 'capabilities' ? `has:${input.dataset.modelKey}` : input.dataset.modelKey;
+    const savedPinValue = (model, input) => (input.dataset.field === 'capabilities' ? model.capabilities || [] : model.providers).join(', ');
     function pinSaveState(id, message, phase = 'idle') {
       $(id).textContent = message;
       $(id).dataset.phase = phase;
@@ -1691,16 +1697,17 @@
       for (const input of $('pinModelList').querySelectorAll('input[data-model-key]')) {
         const model = state.models.find((item) => modelKey(item) === input.dataset.modelKey);
         if (!model) continue;
-        const draft = pinAutosave.drafts.get(modelKey(model));
+        const draft = pinAutosave.drafts.get(draftKey(input));
+        if (draft === undefined && input !== document.activeElement) input.value = savedPinValue(model, input);
+        if (input.dataset.field === 'capabilities') continue;
         const providers = draft === undefined ? model.providers : parseProviders(draft);
-        if (draft === undefined && input !== document.activeElement) input.value = model.providers.join(', ');
         const badge = input.closest('.model-row').querySelector('.pin-routing-badge');
         badge.textContent = providers.length > 1 ? '白名单' : providers.length ? '已固定' : '自动路由';
         badge.classList.toggle('good', providers.length > 0);
       }
     }
     function queuePinSave(input, immediate = false) {
-      pinAutosave.drafts.set(input.dataset.modelKey, input.value);
+      pinAutosave.drafts.set(draftKey(input), input.value);
       clearTimeout(pinAutosave.timer);
       if (!pinAutosave.flight) pinSaveState('pinModelsState', '待保存…', 'pending');
       syncPinDraftRows();
@@ -1721,8 +1728,12 @@
         try {
           while (pinAutosave.drafts.size) {
             const edits = new Map(pinAutosave.drafts);
-            const next = state.models.map((model) => ({ ...model, providers: edits.has(modelKey(model)) ? parseProviders(edits.get(modelKey(model))) : [...model.providers] }));
-            const changed = next.some((model, index) => JSON.stringify(model.providers) !== JSON.stringify(state.models[index].providers));
+            const next = state.models.map((model) => {
+              const item = { ...model, providers: edits.has(modelKey(model)) ? parseProviders(edits.get(modelKey(model))) : [...model.providers] };
+              if (edits.has(capabilityKey(model))) item.capabilities = parseProviders(edits.get(capabilityKey(model)));
+              return item;
+            });
+            const changed = next.some((model, index) => JSON.stringify(model.providers) !== JSON.stringify(state.models[index].providers) || JSON.stringify(model.capabilities) !== JSON.stringify(state.models[index].capabilities));
             pinSaveState('pinModelsState', '正在保存…', 'saving');
             let saved = { models: next };
             if (changed) {
@@ -1732,8 +1743,9 @@
             }
             for (const [key, value] of edits) {
               if (pinAutosave.drafts.get(key) !== value) continue;
-              const model = saved.models.find((item) => modelKey(item) === key);
-              if (model && JSON.stringify(model.providers || []) !== JSON.stringify(parseProviders(value))) throw new Error('服务端返回的白名单与本次修改不一致，请重试');
+              const capabilities = key.startsWith('has:');
+              const model = saved.models.find((item) => (capabilities ? capabilityKey(item) : modelKey(item)) === key);
+              if (model && JSON.stringify((capabilities ? model.capabilities : model.providers) || []) !== JSON.stringify(parseProviders(value))) throw new Error(capabilities ? '服务端返回的能力过滤与本次修改不一致，请重试' : '服务端返回的白名单与本次修改不一致，请重试');
               pinAutosave.drafts.delete(key);
             }
             renderModels(saved, false);
@@ -1782,7 +1794,7 @@
       $('pinModelList').innerHTML = state.models.length ? state.models.map((model, index) => {
         const value = pinAutosave.drafts.get(modelKey(model)) ?? model.providers.join(', ');
         const providers = parseProviders(value);
-        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge pin-routing-badge ${providers.length ? 'good' : ''}">${providers.length > 1 ? '白名单' : providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">${buttonIcon('search')}探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据测试模型，测试前会先完成自动保存">${buttonIcon('test')}测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">允许的上游</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" data-model-key="${esc(modelKey(model))}" value="${esc(value)}" autocomplete="off" spellcheck="false" aria-describedby="pinInputHint pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`;
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><span class="badge pin-routing-badge ${providers.length ? 'good' : ''}">${providers.length > 1 ? '白名单' : providers.length ? '已固定' : '自动路由'}</span><div class="row-actions"><button class="button compact probe-providers" type="button" data-model="${esc(model.id)}" aria-label="${esc(`探测 ${model.id} 可钉上游`)}" aria-controls="pinProbeResult-${esc(index)}">${buttonIcon('search')}探测可钉上游</button><button class="button compact pin-test-model" type="button" data-index="${index}" aria-label="${esc(`测试 ${model.id}`)}" aria-controls="pinModelTest-${index}" title="使用当前所选凭据测试模型，测试前会先完成自动保存">${buttonIcon('test')}测试模型</button></div><div class="field pin-editor"><label for="pinProviders-${esc(index)}">允许的上游</label><input class="control mono" id="pinProviders-${esc(index)}" data-index="${esc(index)}" data-model-key="${esc(modelKey(model))}" value="${esc(value)}" autocomplete="off" spellcheck="false" aria-describedby="pinInputHint pinSemantics"><div id="pinProbeResult-${esc(index)}" role="status" aria-live="polite">${providerProbeHTML(model)}</div></div><div class="field pin-editor"><label for="pinCapabilities-${esc(index)}">能力过滤（has）</label><input class="control mono" id="pinCapabilities-${esc(index)}" data-index="${esc(index)}" data-model-key="${esc(modelKey(model))}" data-field="capabilities" value="${esc(pinAutosave.drafts.get(capabilityKey(model)) ?? (model.capabilities || []).join(', '))}" placeholder="留空则不过滤" autocomplete="off" spellcheck="false" aria-describedby="pinCapabilityHint-${esc(index)}"><div class="provider-chips"><button class="button compact capability-chip" type="button" title="写入 ${esc(recommendedCapabilities.join(', '))}">${buttonIcon('plus')}推荐：${esc(recommendedCapabilities.join(' + '))}</button></div><div class="subtext" id="pinCapabilityHint-${esc(index)}">只路由到同时具备这些能力的上游模型。部分 Pass 账号仅填白名单不生效，需同时填写推荐值；留空表示不过滤。</div></div><div class="pin-model-test" id="pinModelTest-${index}" role="status" aria-live="polite"></div></div>`;
       }).join('') : '<div class="empty"><strong>暂无模型映射</strong>请前往模型映射标签添加模型。</div>';
       syncProviderProbeControls();
       syncPinModelTests();
@@ -1851,10 +1863,11 @@
         if (model) probeModelProviders(model);
         return;
       }
-      const chip = event.target.closest('.provider-chip');
+      const chip = event.target.closest('.provider-chip, .capability-chip');
       if (!chip || (state.modelBusy && !pinAutosave.flight)) return;
       const input = chip.closest('.pin-editor').querySelector('input');
-      input.value = parseProviders(`${input.value}, ${chip.dataset.provider}`).join(', ');
+      const added = chip.classList.contains('capability-chip') ? recommendedCapabilities.join(', ') : chip.dataset.provider;
+      input.value = parseProviders(`${input.value}, ${added}`).join(', ');
       input.focus();
       queuePinSave(input, true);
     });
@@ -1862,7 +1875,7 @@
       if (!event.target.matches('input[data-model-key]')) return;
       if (event.isComposing) {
         clearTimeout(pinAutosave.timer);
-        pinAutosave.drafts.set(event.target.dataset.modelKey, event.target.value);
+        pinAutosave.drafts.set(draftKey(event.target), event.target.value);
         pinSaveState('pinModelsState', '待保存…', 'pending');
       } else queuePinSave(event.target);
     });

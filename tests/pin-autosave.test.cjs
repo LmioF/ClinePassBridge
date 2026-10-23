@@ -83,6 +83,12 @@ function page(intercept = async () => {}) {
         closest: () => row,
         matches: selector => selector === 'input[data-model-key]',
       });
+      inputs.set(`${model.id}#has`, {
+        dataset: { modelKey: key(model), field: 'capabilities' }, value: (model.capabilities || []).join(', '),
+        selectionStart: 0, selectionEnd: 0,
+        closest: () => row,
+        matches: selector => selector === 'input[data-model-key]',
+      });
     }
   }
   buildInputs();
@@ -249,4 +255,24 @@ test('快速切换策略串行保存，旧响应保留当前选择且最终值�
   assert.equal(view.state.config.provider_policy, 'client');
   assert.equal(view.state.config.log_retention, 731);
   assert.equal(view.nodes.get('providerPolicyState').dataset.phase, 'saved');
+});
+
+test('能力过滤与白名单共用自动保存，只给被修改的模型写入 capabilities', async () => {
+  const view = page();
+  await view.edit('a#has', 'Vision implicit-caching, vision');
+  await view.edit('b', 'vendor-b');
+  await view.advance(650);
+  assert.equal(view.calls.length, 1);
+  const expected = clone(view.initial);
+  expected[0].capabilities = ['vision', 'implicit-caching'];
+  expected[1].providers = ['vendor-b'];
+  assert.deepEqual(view.calls[0].body.models, expected);
+  assert.deepEqual(clone(view.state.models), expected);
+  assert.equal(view.inputs.get('a#has').value, 'vision, implicit-caching');
+  assert.equal(view.nodes.get('pinModelsState').dataset.phase, 'saved');
+
+  await view.edit('a#has', '');
+  await view.advance(650);
+  assert.equal(view.calls.length, 2);
+  assert.deepEqual(view.calls[1].body.models[0].capabilities, [], '清空能力过滤保存为 []');
 });

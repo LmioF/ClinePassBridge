@@ -88,6 +88,9 @@ func (s *Service) config() Config {
 		if c.Models[i].Providers != nil {
 			c.Models[i].Providers = append([]string{}, c.Models[i].Providers...)
 		}
+		if c.Models[i].Capabilities != nil {
+			c.Models[i].Capabilities = append([]string{}, c.Models[i].Capabilities...)
+		}
 	}
 	return c
 }

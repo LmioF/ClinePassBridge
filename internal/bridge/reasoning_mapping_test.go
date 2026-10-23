@@ -432,7 +432,7 @@ func TestReasoningMappingProviderProbeOutbound(t *testing.T) {
 			if enabled {
 				want, mapping = "xhigh", &ReasoningMappingLog{"unset", "xhigh"}
 			}
-			if present != enabled || str(value) != want || body["stream"] != true || number(body["max_tokens"]) != 16 || body["providerOptions"] != nil {
+			if present != enabled || str(value) != want || body["stream"] != true || number(body["max_tokens"]) != 16 || string(jsonBytes(body["providerOptions"])) != `{"gateway":{"has":["vision","implicit-caching"]}}` {
 				t.Errorf("provider outbound body = %s", jsonBytes(body))
 			}
 			entry := s.logs[0]
@@ -644,7 +644,9 @@ func TestReasoningMappingConfigPUTModelReorder(t *testing.T) {
 	}
 	response := observabilityManagement(t, s, "PUT", "/config", nil, jsonBytes(map[string]any{"models": models}), 200)
 	want := cfg
-	want.Models = []Model{models[0], {ID: "deepseek-flash", UpstreamID: cfg.Models[0].UpstreamID, Providers: []string{"deepseek"}, ReasoningMapping: defaultMapping}}
+	first := models[0]
+	first.Capabilities = defaultDeepSeekCapabilities()
+	want.Models = []Model{first, {ID: "deepseek-flash", UpstreamID: cfg.Models[0].UpstreamID, Providers: []string{"deepseek"}, Capabilities: defaultDeepSeekCapabilities(), ReasoningMapping: defaultMapping}}
 	var returned Config
 	if err := json.Unmarshal(response.Body, &returned); err != nil {
 		t.Fatal(err)

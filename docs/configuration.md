@@ -44,6 +44,19 @@ DeepSeek 模型首次设置时默认填入 `deepseek`，其他模型保持自动
 
 provider 策略默认是「插件配置优先」，客户端传入的 provider 字段会被忽略。选择「客户端优先」后，客户端传入的字段优先生效，其余字段由插件配置补齐。最终的 `only` 允许列表与 `order` 顺序提示会同时写入 `provider` 和 `providerOptions.gateway`，兼容读取不同路由字段的上游路径。探测候选时会移除这两种字段，避免已有允许列表限制探测结果。
 
+### 能力过滤（has）
+
+每个模型还可以设置「能力过滤」，写入 `providerOptions.gateway.has`（只写这一处，不写顶层 `provider`）。网关只会路由到同时具备所列全部能力的上游模型，可选值见 [AI Gateway 模型能力过滤](https://vercel.com/docs/ai-gateway/models-and-providers/model-filtering)，例如 `vision`、`implicit-caching`、`tool-use`、`reasoning`；写错的值会被上游拒绝。
+
+部分 Cline Pass 账号只发 `only` 时白名单不生效，连不存在的上游也能返回成功。2026-10-23 的实测显示，同时要求 `vision` 和 `implicit-caching` 后，同一账号会改走能执行 `only` 的路由：返回的 `finalProvider` 为 `deepseek`，填写无效上游时也会正确报错。原因没有服务端源码可以确认，所以这只是可编辑的默认值，不是固定规则：
+
+- 已固定上游的 DeepSeek 模型，在能力过滤从未设置过时默认填入 `vision, implicit-caching`；升级后已有的 DeepSeek 白名单也会自动带上这两个值。
+- 其他模型和未固定上游的模型默认不过滤。显式清空后不会再次自动填回。
+- 策略与白名单相同：「插件配置优先」时忽略客户端传入的 `has`；「客户端优先」时客户端的 `has`（包括空数组）优先生效。
+- 「探测可钉上游」会保留能力过滤、只去掉 `only`/`order`，因为能力过滤决定了账号会落到哪条路由、能看到哪些候选。
+
+要验证是否生效，可以把白名单改成一个不存在的上游（如 `not-a-real-provider`）后点击「测试模型」：请求应报“没有匹配上游”，而不是正常回答。
+
 ## 联网工具注入（server_tools）
 
 「模型映射」每行右侧的「联网」按钮打开该模型的工具勾选：勾中的工具会在 bridge 构造上游请求体时追加到 `tools`，由上游网关执行（模型发起、上游检索、结果直接回灌给模型）。客户端不必自己声明搜索工具，也不会收到 `tool_calls` 或搜索结果原文。
